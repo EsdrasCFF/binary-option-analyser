@@ -96,7 +96,7 @@ npm run start
 | `POST /api/candles/import` | CSV via `multipart/form-data` (`file`, opcionalmente `dataProviderId` e `source`). Usa `CSVCandleProvider`, resolve/cria os `currency_pairs`, insere em lotes de 500 com `ON CONFLICT DO NOTHING` e registra tudo em `import_jobs`. Responde com totais de linhas importadas/duplicadas |
 | `GET /api/candles/import?jobId=` | Status de uma importação (ou lista todas) |
 | `POST /api/candles/import-yahoo` | Importa candles **reais** do Yahoo Finance por símbolo (`"EUR/USD"`) + timeframe + período opcional. Sem CSV. Avisa explicitamente (`windows[].truncated`, `warning`) quando o período pedido excede o histórico intraday disponível na fonte |
-| `POST /api/analyses` | Cria `Analysis` + `AnalysisConfiguration`, valida timezone e pares, e executa a análise. `?process=false` cria sem executar |
+| `POST /api/analyses` | Cria `Analysis` + `AnalysisConfiguration`, valida timezone e pares, e executa a análise. `?process=false` cria sem executar. `topN` (default 10) mantém só os N horários com maior `repetitionPct` — é o "ranking de até 10 horários acima de X%" |
 | `GET /api/analyses` | Lista as análises do usuário |
 | `GET /api/analyses/:id` | Detalhe + configuração + `status`/`progressPct` (polling) |
 | `DELETE /api/analyses/:id` | Remove a análise (cascade nos resultados) |
@@ -196,7 +196,13 @@ Verificado contra um Neon real (não só compilação):
   horário fixo). Truncamento de janela testado (1m pedindo 30 dias → ajustado para
   8 dias, com aviso explícito na resposta). Erro de símbolo inexistente → 502 com
   mensagem clara.
-- `npm run test` → 55 testes. `npm run typecheck` → sem erros. `npm run build` →
+- **Ranking com `topN`**: EUR/GBP real (30 dias, M5, janela 06:00-12:00, `minRepetitionPct: 70`,
+  `topN: 10`) → dos horários no intervalo, só 5 passaram do limite de 70%
+  (07:20 PUT 72,73%, 09:20 PUT 72,73%, 10:00 CALL 71,43%, 10:25 CALL 71,43%,
+  10:35 PUT 70,00%) — exatamente o caso de uso de "ranking de até N horários
+  acima de X%" descrito pelo usuário. Confirmado que análises criadas antes
+  dessa coluna existir (`top_n`) migraram com o default (10) sem quebrar.
+- `npm run test` → 57 testes. `npm run typecheck` → sem erros. `npm run build` →
   limpo, 10 rotas.
 
 **Segurança**: o projeto não tinha `.gitignore` até esta sessão — o `.env` com a

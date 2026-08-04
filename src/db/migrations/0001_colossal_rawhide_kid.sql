@@ -1,0 +1,1 @@
+ALTER TABLE "analysis_configurations" ADD COLUMN "top_n" integer DEFAULT 10 NOT NULL;
