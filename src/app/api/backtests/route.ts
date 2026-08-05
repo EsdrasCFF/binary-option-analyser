@@ -81,7 +81,7 @@ function assertConsistentParameters(body: z.infer<typeof bodySchema>): void {
 
 export async function POST(req: NextRequest) {
   return handleErrors(async () => {
-    const userId = await requireUserId(req);
+    const userId = await requireUserId();
     const body = await parseJsonBody(req, bodySchema);
     assertConsistentParameters(body);
 
@@ -133,9 +133,9 @@ export async function POST(req: NextRequest) {
   });
 }
 
-export async function GET(req: NextRequest) {
+export async function GET(_req: NextRequest) {
   return handleErrors(async () => {
-    const userId = await requireUserId(req);
+    const userId = await requireUserId();
     const items = await db
       .select()
       .from(backtests)

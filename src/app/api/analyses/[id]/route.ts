@@ -14,8 +14,8 @@ import { ApiError, handleErrors, isUuid } from "@/lib/api/http";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
-async function loadOwnedAnalysis(req: NextRequest, id: string) {
-  const userId = await requireUserId(req);
+async function loadOwnedAnalysis(id: string) {
+  const userId = await requireUserId();
   if (!isUuid(id)) throw new ApiError("Identificador inválido (esperado UUID).", 400);
 
   const [analysis] = await db
@@ -28,10 +28,10 @@ async function loadOwnedAnalysis(req: NextRequest, id: string) {
   return analysis;
 }
 
-export async function GET(req: NextRequest, ctx: RouteContext) {
+export async function GET(_req: NextRequest, ctx: RouteContext) {
   return handleErrors(async () => {
     const { id } = await ctx.params;
-    const analysis = await loadOwnedAnalysis(req, id);
+    const analysis = await loadOwnedAnalysis(id);
 
     const [configuration] = await db
       .select()
@@ -52,10 +52,10 @@ export async function GET(req: NextRequest, ctx: RouteContext) {
   });
 }
 
-export async function DELETE(req: NextRequest, ctx: RouteContext) {
+export async function DELETE(_req: NextRequest, ctx: RouteContext) {
   return handleErrors(async () => {
     const { id } = await ctx.params;
-    await loadOwnedAnalysis(req, id);
+    await loadOwnedAnalysis(id);
     await db.delete(analyses).where(eq(analyses.id, id));
     return new NextResponse(null, { status: 204 });
   });

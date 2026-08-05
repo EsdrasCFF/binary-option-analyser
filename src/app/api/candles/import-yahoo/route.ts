@@ -43,7 +43,7 @@ const bodySchema = z.object({
 
 export async function POST(req: NextRequest) {
   return handleErrors(async () => {
-    const userId = await requireUserId(req);
+    const userId = await requireUserId();
     const body = await parseJsonBody(req, bodySchema);
 
     if (!isSupportedYahooInterval(body.timeframe)) {

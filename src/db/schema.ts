@@ -65,7 +65,8 @@ export const dataProviderTypeEnum = pgEnum("data_provider_type", ["csv", "api"])
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
   email: varchar("email", { length: 255 }).notNull().unique(),
-  passwordHash: text("password_hash").notNull(),
+  // nulo para usuários criados via OAuth (Google) — não há senha própria a validar
+  passwordHash: text("password_hash"),
   name: varchar("name", { length: 255 }).notNull(),
   isAdmin: boolean("is_admin").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

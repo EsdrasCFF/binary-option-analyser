@@ -53,7 +53,7 @@ const SORT_COLUMNS = {
 
 export async function GET(req: NextRequest) {
   return handleErrors(async () => {
-    const userId = await requireUserId(req);
+    const userId = await requireUserId();
     const q = parseSearchParams(new URL(req.url), querySchema);
 
     const conditions: SQL[] = [eq(analyses.userId, userId)];

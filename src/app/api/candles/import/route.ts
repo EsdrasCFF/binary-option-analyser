@@ -37,7 +37,7 @@ const MAX_FILE_BYTES = 20 * 1024 * 1024; // 20 MB
 
 export async function POST(req: NextRequest) {
   return handleErrors(async () => {
-    const userId = await requireUserId(req);
+    const userId = await requireUserId();
 
     const form = await req.formData().catch(() => null);
     if (!form) {
@@ -82,7 +82,7 @@ export async function POST(req: NextRequest) {
 /** GET /api/candles/import?jobId=... — status de uma importação (polling da UI). */
 export async function GET(req: NextRequest) {
   return handleErrors(async () => {
-    const userId = await requireUserId(req);
+    const userId = await requireUserId();
     const jobId = new URL(req.url).searchParams.get("jobId");
 
     if (jobId) {

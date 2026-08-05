@@ -51,12 +51,13 @@ pedida para o que está disponível e a rota **avisa explicitamente** (`windows[
 em vez de cortar silenciosamente.
 
 `src/lib/api/` — `http.ts` (formato único de erro, serialização de `Decimal` como string, validadores Zod compartilhados) e
-`current-user.ts` (**placeholder** de autenticação, ver aviso abaixo).
+`current-user.ts` (resolve o usuário via Auth.js, ver seção de autenticação abaixo).
 
-Testes (Vitest): **55 passando** — 35 do motor de domínio, 10 de `run-analysis`
-(exemplo do enunciado incluso: 30 dias, 24 PUT, 6 CALL, 80%; timezone; janela de
-horários; dias da semana; ordenação e filtro) e 10 de `yahoo-finance` (parsing,
-truncamento de janela, tratamento de erro — com fetch mockado, sem depender de rede).
+Testes (Vitest): **57 passando** — 36 do motor de domínio (incluindo `topN` em
+`rankPatterns`), 11 de `run-analysis` (exemplo do enunciado incluso: 30 dias, 24
+PUT, 6 CALL, 80%; timezone; janela de horários; dias da semana; ordenação, filtro
+e `topN`) e 10 de `yahoo-finance` (parsing, truncamento de janela, tratamento de
+erro — com fetch mockado, sem depender de rede).
 
 `src/db/schema.ts`: schema **Drizzle ORM** com as 14 entidades do domínio (User, DataProvider, CurrencyPair, Candle, Analysis, AnalysisConfiguration, PatternResult, Backtest, BacktestOperation, BankrollConfiguration, MartingaleCalculation, MartingaleLevel, ImportJob, AuditLog), índices em par+timeframe+horário (a consulta mais frequente do sistema) e foreign keys corretas. Migration inicial já gerada e validada em `src/db/migrations/0000_bumpy_power_pack.sql`.
 
@@ -113,21 +114,46 @@ Convenções da API:
 - Toda leitura é restrita ao usuário autenticado via `INNER JOIN` — não é possível
   ler resultados de outro usuário nem informando o id dele.
 
-### ⚠️ Autenticação ainda não implementada
+### ✅ Autenticação — Auth.js v5 (Google)
 
-`src/lib/api/current-user.ts` é um **placeholder**: resolve o usuário pelo cabeçalho
-`x-user-id` ou pela variável `DEV_USER_ID`, e **falha com 501 quando
-`NODE_ENV=production`**. Isso é proposital — um header controlado pelo cliente
-permitiria personificar qualquer usuário, então é melhor que a rota se recuse a
-funcionar em produção do que parecer segura sem ser. Ao implementar a autenticação
-real (JWT ou `next-auth`), basta trocar o corpo de `requireUserId`: nenhuma rota
-precisa mudar.
+Implementada com **Auth.js v5** (`next-auth@beta`, `5.0.0-beta.32` — ainda não é
+1.0 estável, mas é o caminho padrão para App Router e amplamente usado nessa fase
+beta) com **Google como único provider** por enquanto (plano: ampliar depois).
+
+| Peça | O que faz |
+|---|---|
+| `src/auth.ts` | Config central: provider Google, sessão em **JWT** (sem tabelas `accounts`/`sessions` do adapter oficial) |
+| `src/app/api/auth/[...nextauth]/route.ts` | Expõe os endpoints padrão do Auth.js (`/api/auth/signin`, `/callback/google`, `/session` etc.) |
+| `src/lib/api/current-user.ts` | Não é mais placeholder: `requireUserId()` chama `auth()` e lança 401 sem sessão |
+| `src/app/page.tsx` | Botão "Entrar com Google" / "Sair" via Server Actions (`signIn`/`signOut`) |
+
+Como o `sub` do Google não é o `id` usado nas foreign keys do sistema, o callback
+`jwt` em `src/auth.ts` resolve (ou cria, no primeiro login) a linha correspondente
+em `users` **por e-mail** e grava esse UUID interno no token — é ele que vira
+`session.user.id` e o que `requireUserId()` devolve. `users.password_hash` virou
+nullable (migration `0002`), já que usuários via Google não têm senha própria.
+
+**Variáveis de ambiente** (`.env.example`): `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`
+(OAuth Client do Google Cloud Console) e `AUTH_SECRET` (assinatura/criptografia da
+sessão). Redirect URI a registrar no Google Cloud: `http://localhost:3000/api/auth/callback/google`
+em dev (trocar o domínio em produção).
+
+**Verificado**: `/api/auth/providers` expõe o Google corretamente; rota protegida
+sem sessão → 401; simulei uma sessão válida assinando um cookie com o mesmo
+`AUTH_SECRET` (via a própria função `encode` do Auth.js) para testar o caminho real
+de verificação ponta a ponta sem precisar clicar na tela de consentimento do
+Google — `/api/auth/session` devolveu o usuário mapeado corretamente e a rota
+protegida autorizou (200); cookie adulterado → sessão nula → 401. **Não
+verificado**: o clique real "Entrar com Google" (consentimento do Google só pode
+ser feito por um humano) e a criação de usuário novo pelo fluxo OAuth real (o
+upsert por e-mail no callback `jwt` só roda com `account` presente, o que só
+acontece num login real) — vale você testar uma vez no navegador para fechar essa
+ponta.
 
 ## Roadmap das próximas fases
 
-### Fase 2 — Route Handlers (API do Next) — CONCLUÍDA (exceto autenticação)
-Todas as rotas acima estão implementadas. Pendências conhecidas:
-- **Autenticação** (JWT ou `next-auth`) — ver aviso acima.
+### Fase 2 — Route Handlers (API do Next) — CONCLUÍDA
+Todas as rotas estão implementadas e autenticadas de verdade. Pendências conhecidas:
 - **Execução dentro do request**: `POST /api/analyses` processa a análise no próprio
   request. Para períodos longos isso pode estourar o tempo máximo do provedor de
   deploy; `analyses.status`/`progressPct` e `?process=false` já existem para a
@@ -203,19 +229,23 @@ Verificado contra um Neon real (não só compilação):
   acima de X%" descrito pelo usuário. Confirmado que análises criadas antes
   dessa coluna existir (`top_n`) migraram com o default (10) sem quebrar.
 - `npm run test` → 57 testes. `npm run typecheck` → sem erros. `npm run build` →
-  limpo, 10 rotas.
+  limpo, 11 rotas (10 de domínio + `/api/auth/[...nextauth]`).
+- **Autenticação real (Auth.js v5 + Google)**: ver seção própria acima.
 
 **Segurança**: o projeto não tinha `.gitignore` até esta sessão — o `.env` com a
 connection string real do Neon estava exposto para `git add` (nunca houve commit,
 então nada vazou). Criado antes de qualquer outra alteração.
 
-**Ainda não verificado**: motor de backtest (não existe ainda, é a Fase 3);
-autenticação real; comportamento do Yahoo Finance em produção sob uso sustentado
-(é endpoint não-oficial — risco de bloqueio/rate limit não testado).
+**Ainda não verificado**: motor de backtest (não existe ainda, é a Fase 3); login
+real via Google no navegador (só um humano pode clicar no consentimento —
+verifiquei o resto do caminho com uma sessão assinada manualmente, ver seção de
+autenticação); comportamento do Yahoo Finance em produção sob uso sustentado (é
+endpoint não-oficial — risco de bloqueio/rate limit não testado).
 
 ## Próximos passos sugeridos
 
-1. Autenticação real, substituindo o placeholder de `current-user.ts`.
+1. Testar o login real com Google no navegador para fechar a última ponta da
+   autenticação (criação de usuário novo pelo fluxo OAuth de verdade).
 2. Fase 3 — motor de backtest cronológico (agora com uma fonte de dados real
    disponível via Yahoo Finance para testar contra mercado de verdade).
 3. Fase 2.5 (shadcn/ui) para começar o frontend.
