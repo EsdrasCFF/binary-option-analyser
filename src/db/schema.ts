@@ -252,6 +252,7 @@ export const backtests = pgTable(
     periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
     status: jobStatusEnum("status").notNull().default("pending"),
     progressPct: integer("progress_pct").notNull().default(0),
+    errorMessage: text("error_message"),
     // resultados consolidados (preenchidos ao concluir)
     finalBankroll: numeric("final_bankroll", { precision: 18, scale: 2 }),
     totalOperations: integer("total_operations"),

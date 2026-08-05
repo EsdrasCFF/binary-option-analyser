@@ -1,12 +1,7 @@
 /**
- * POST /api/backtests — cria um backtest (fila de execução).
+ * POST /api/backtests — cria um backtest, valida os padrões selecionados
+ * pertencem ao usuário e executa a simulação (motor de `src/lib/backtest`).
  * GET  /api/backtests — lista os backtests do usuário.
- *
- * O motor cronológico é a Fase 3 do roadmap. Esta rota já valida e persiste
- * todos os parâmetros da simulação, deixando o registro em `pending` — quando
- * o motor existir, basta chamá-lo aqui (ou pela fila da Fase 4) sem mudar o
- * contrato da API. Por isso a resposta é 202 Accepted, e não 201: o recurso
- * foi criado, mas o resultado ainda não existe.
  *
  * Exemplo de body:
  * {
@@ -20,6 +15,10 @@
  *   "periodStart": "2026-01-01T00:00:00Z",
  *   "periodEnd": "2026-02-01T00:00:00Z"
  * }
+ *
+ * Nota (Fase 4): assim como `/api/analyses`, o processamento roda dentro do
+ * request. `?process=false` cria o registro sem executar, para a migração à
+ * fila assíncrona.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { Decimal } from "decimal.js";
@@ -36,6 +35,7 @@ import {
   parseJsonBody,
   uuidString,
 } from "@/lib/api/http";
+import { processBacktest } from "@/lib/backtest/backtest-service";
 
 const bodySchema = z
   .object({
@@ -122,14 +122,15 @@ export async function POST(req: NextRequest) {
       })
       .returning();
 
-    return NextResponse.json(
-      {
-        backtest,
-        message:
-          "Backtest criado e aguardando execução. O motor cronológico é a Fase 3 do roadmap; acompanhe o campo status.",
-      },
-      { status: 202 }
-    );
+    const shouldProcess = new URL(req.url).searchParams.get("process") !== "false";
+    if (!shouldProcess) {
+      return NextResponse.json({ backtest, processed: false }, { status: 201 });
+    }
+
+    const result = await processBacktest(backtest.id);
+    const [updated] = await db.select().from(backtests).where(eq(backtests.id, backtest.id)).limit(1);
+
+    return NextResponse.json({ backtest: updated, processed: true, ...result }, { status: 201 });
   });
 }
 

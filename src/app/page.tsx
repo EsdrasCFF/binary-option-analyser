@@ -1,4 +1,5 @@
 import { auth, signIn, signOut } from "@/auth";
+import { Button } from "@/components/ui/button";
 
 export default async function DashboardPage() {
   const session = await auth();
@@ -8,20 +9,20 @@ export default async function DashboardPage() {
       <h1 className="text-2xl font-semibold tracking-tight">
         Análise Estatística e Backtest de Candles
       </h1>
-      <p className="mt-2 text-slate-400">
+      <p className="mt-2 text-muted-foreground">
         Estrutura inicial do App Router. As 16 telas do projeto (dashboard,
         análises, ranking de padrões, backtest, calculadora de entradas etc.)
         serão implementadas nas próximas fases, consumindo os Route Handlers
-        em <code className="rounded bg-slate-900 px-1.5 py-0.5">src/app/api</code>{" "}
+        em <code className="rounded bg-muted px-1.5 py-0.5">src/app/api</code>{" "}
         e o motor de domínio em{" "}
-        <code className="rounded bg-slate-900 px-1.5 py-0.5">src/lib/core</code>.
+        <code className="rounded bg-muted px-1.5 py-0.5">src/lib/core</code>.
       </p>
 
-      <div className="mt-8 rounded-lg border border-slate-800 p-4">
+      <div className="mt-8 rounded-lg border p-4">
         {session?.user ? (
           <div className="flex items-center justify-between">
-            <p className="text-sm text-slate-300">
-              Conectado como <strong>{session.user.email}</strong>
+            <p className="text-sm text-muted-foreground">
+              Conectado como <strong className="text-foreground">{session.user.email}</strong>
             </p>
             <form
               action={async () => {
@@ -29,12 +30,9 @@ export default async function DashboardPage() {
                 await signOut();
               }}
             >
-              <button
-                type="submit"
-                className="rounded bg-slate-800 px-3 py-1.5 text-sm hover:bg-slate-700"
-              >
+              <Button type="submit" variant="outline">
                 Sair
-              </button>
+              </Button>
             </form>
           </div>
         ) : (
@@ -44,12 +42,7 @@ export default async function DashboardPage() {
               await signIn("google");
             }}
           >
-            <button
-              type="submit"
-              className="rounded bg-slate-100 px-3 py-1.5 text-sm text-slate-900 hover:bg-white"
-            >
-              Entrar com Google
-            </button>
+            <Button type="submit">Entrar com Google</Button>
           </form>
         )}
       </div>

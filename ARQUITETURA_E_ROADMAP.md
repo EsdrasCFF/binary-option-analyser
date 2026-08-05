@@ -53,11 +53,15 @@ em vez de cortar silenciosamente.
 `src/lib/api/` — `http.ts` (formato único de erro, serialização de `Decimal` como string, validadores Zod compartilhados) e
 `current-user.ts` (resolve o usuário via Auth.js, ver seção de autenticação abaixo).
 
-Testes (Vitest): **57 passando** — 36 do motor de domínio (incluindo `topN` em
+`src/lib/backtest/` — motor de backtest cronológico, ver seção própria abaixo.
+
+Testes (Vitest): **69 passando** — 36 do motor de domínio (incluindo `topN` em
 `rankPatterns`), 11 de `run-analysis` (exemplo do enunciado incluso: 30 dias, 24
 PUT, 6 CALL, 80%; timezone; janela de horários; dias da semana; ordenação, filtro
-e `topN`) e 10 de `yahoo-finance` (parsing, truncamento de janela, tratamento de
-erro — com fetch mockado, sem depender de rede).
+e `topN`), 10 de `yahoo-finance` (parsing, truncamento de janela, tratamento de
+erro — com fetch mockado, sem depender de rede) e 12 de `run-backtest`
+(não-olhar-o-futuro, vitória/derrota em cada nível do Martingale, as 3
+políticas de DOJI, limites diários, `contrarian`, agregação por grupo).
 
 `src/db/schema.ts`: schema **Drizzle ORM** com as 14 entidades do domínio (User, DataProvider, CurrencyPair, Candle, Analysis, AnalysisConfiguration, PatternResult, Backtest, BacktestOperation, BankrollConfiguration, MartingaleCalculation, MartingaleLevel, ImportJob, AuditLog), índices em par+timeframe+horário (a consulta mais frequente do sistema) e foreign keys corretas. Migration inicial já gerada e validada em `src/db/migrations/0000_bumpy_power_pack.sql`.
 
@@ -102,8 +106,10 @@ npm run start
 | `GET /api/analyses/:id` | Detalhe + configuração + `status`/`progressPct` (polling) |
 | `DELETE /api/analyses/:id` | Remove a análise (cascade nos resultados) |
 | `GET /api/pattern-results` | Lista paginada com filtros `analysisId`, `currencyPairId`, `timeframe`, `timeOfDay`, `status`, `direction`, `minPct`, `onlyActive`, ordenação `sortBy`/`order` e `limit`/`offset` |
-| `POST /api/backtests` | Valida e persiste todos os parâmetros da simulação; responde **202** com `status: "pending"` (execução = Fase 3) |
+| `POST /api/backtests` | Cria e **executa** a simulação cronológica (`src/lib/backtest`). `?process=false` cria sem executar |
 | `GET /api/backtests` | Lista os backtests do usuário |
+| `GET /api/backtests/:id` | Detalhe + `status`/`progressPct` + `summary` agregado (polling) |
+| `GET /api/backtests/:id/operations` | Lista paginada das operações simuladas, filtra por par/horário/resultado |
 | `POST /api/martingale-calculations` | Calculadora de entradas (sem banco) |
 
 Convenções da API:
@@ -165,12 +171,59 @@ Todas as rotas estão implementadas e autenticadas de verdade. Pendências conhe
 ### Fase 2.5 — shadcn/ui
 `npx shadcn@latest init` (Tailwind v4 já configurado, compatível). Necessário para os componentes de formulário/tabela das 16 telas.
 
-### Fase 3 — Motor de Backtest cronológico
-Construído sobre `pattern-analyzer.ts`, mas recalculando a predominância
-**apenas com os dias anteriores** a cada operação simulada (rolling window),
-para não usar dados futuros. Aplica `martingale-calculator.ts` operação a
-operação e agrega métricas (drawdown, sequências, resultado por moeda/timeframe/
-horário/dia da semana/mês).
+### ✅ Fase 3 — Motor de Backtest cronológico — CONCLUÍDA
+
+`src/lib/backtest/` — mesma separação pura/serviço já usada na Fase 2:
+
+| Arquivo | Responsabilidade |
+|---|---|
+| `run-backtest.ts` | **Puro**: recebe `Candle[]` + os horários selecionados + config, devolve operações + métricas. Sem banco, sem HTTP |
+| `backtest-service.ts` | Carrega candles via `DbCandleProvider`, chama `runBacktest`, persiste `backtest_operations` e atualiza `backtests.status`/`summary` |
+
+Como funciona, ponto a ponto:
+- **Sem look-ahead**: para cada dia simulado, a direção predominante de cada
+  horário é recalculada com `analyzeTimeSlot` usando **só os candles
+  anteriores àquele dia** (`analyzeTimeSlot` já existia da Fase 1/2; aqui é
+  chamado uma vez por dia simulado, não uma vez para o período inteiro). Um
+  teste dedicado prova isso: histórico 100% PUT + período do backtest 100%
+  CALL → o motor prevê PUT em todos os dias (só sabia do histórico) e perde
+  sempre, em vez de "trapacear" com o resultado que só existiria no futuro.
+- **Martingale persegue no próximo candle, não no dia seguinte**: se o candle
+  de abertura perde, o motor avança para o candle seguinte da mesma série
+  (`symbol+timeframe`, pelo `closeTime` exato) com o valor do próximo nível de
+  `martingale-calculator.ts`, até vencer ou esgotar `martingaleLevels`. Uma
+  operação = uma linha de resultado, mesmo cobrindo vários candles.
+- **DOJI no candle real**: `dojiPolicy` do backtest decide — `ignore` descarta
+  a operação (não conta nem como vitória nem derrota), `count_as_tie` fecha a
+  operação com lucro zero, `count_as_loss` conta como derrota normal (pode
+  acionar o Martingale).
+- **Limites de risco viram restrições de verdade**: `dailyLossLimit` para de
+  abrir operações no dia após a perda acumulada atingir o limite;
+  `maxOperationsPerDay` capa o total de operações abertas no dia (somando
+  todos os horários selecionados); `maxExposureLimit` recusa abrir uma
+  operação cujo cronograma de Martingale exigiria mais que o limite.
+- Se a banca atual não suporta mais o cronograma configurado
+  (`MartingaleValidationError`), a operação é pulada, não derruba o backtest.
+- Se faltar o candle seguinte na perseguição do Martingale (gap de dados), a
+  operação é descartada em vez de fingir um resultado.
+
+Rotas novas: `GET /api/backtests/:id` (detalhe + `summary` agregado) e
+`GET /api/backtests/:id/operations` (lista paginada, filtra por par/horário/
+resultado). `POST /api/backtests` agora executa de verdade (mesmo padrão
+`?process=false` da Analysis).
+
+**Testes**: 12 novos em `run-backtest.test.ts` (69 no total) — incluindo o
+teste de não-olhar-o-futuro acima, vitória/derrota em cada nível, as 3
+políticas de DOJI, `dailyLossLimit`, `maxOperationsPerDay`, `contrarian` e
+agregação por par/horário/dia da semana/mês.
+
+**Verificado com dados reais**: rodei um backtest de EUR/GBP (mesmos 5
+horários da Analysis testada na sessão anterior, 15/jul a 04/ago, M5, payout
+85%, banca R$1.000, 2 níveis de Martingale) contra o Neon real — 75 operações,
+69 vitórias, 6 derrotas, banca final R$1.070,17, drawdown máximo R$52,54,
+profit factor 1,43. As 6 derrotas bateram exatamente com o resumo agregado
+(todas no nível 2, mesmo valor de perda cada). Isolamento entre usuários
+confirmado na rota de detalhe (404 para o backtest de outro usuário).
 
 ### Fase 4 — Processamento assíncrono
 Sem Celery/Redis nesta stack: usar **Vercel Queues / Inngest / Trigger.dev**
@@ -228,24 +281,32 @@ Verificado contra um Neon real (não só compilação):
   10:35 PUT 70,00%) — exatamente o caso de uso de "ranking de até N horários
   acima de X%" descrito pelo usuário. Confirmado que análises criadas antes
   dessa coluna existir (`top_n`) migraram com o default (10) sem quebrar.
-- `npm run test` → 57 testes. `npm run typecheck` → sem erros. `npm run build` →
-  limpo, 11 rotas (10 de domínio + `/api/auth/[...nextauth]`).
 - **Autenticação real (Auth.js v5 + Google)**: ver seção própria acima.
+- **Motor de backtest cronológico (Fase 3)**: EUR/GBP real (5 horários da
+  Analysis anterior, 15/jul-04/ago, M5, payout 85%, banca R$1.000, 2 níveis de
+  Martingale) → 75 operações, 69 vitórias, 6 derrotas, banca final R$1.070,17,
+  drawdown máx. R$52,54, profit factor 1,43 — ver seção própria acima.
+- `npm run test` → 69 testes. `npm run typecheck` → sem erros. `npm run build` →
+  limpo, 13 rotas.
 
-**Segurança**: o projeto não tinha `.gitignore` até esta sessão — o `.env` com a
-connection string real do Neon estava exposto para `git add` (nunca houve commit,
-então nada vazou). Criado antes de qualquer outra alteração.
+**Segurança**: o projeto não tinha `.gitignore` até a sessão que implementou o
+Yahoo Finance — o `.env` com a connection string real do Neon estava exposto
+para `git add` (nunca houve commit, então nada vazou). Criado antes de
+qualquer outra alteração.
 
-**Ainda não verificado**: motor de backtest (não existe ainda, é a Fase 3); login
-real via Google no navegador (só um humano pode clicar no consentimento —
-verifiquei o resto do caminho com uma sessão assinada manualmente, ver seção de
-autenticação); comportamento do Yahoo Finance em produção sob uso sustentado (é
-endpoint não-oficial — risco de bloqueio/rate limit não testado).
+**Ainda não verificado**: login real via Google no navegador (só um humano
+pode clicar no consentimento — verifiquei o resto do caminho com uma sessão
+assinada manualmente, ver seção de autenticação); comportamento do Yahoo
+Finance em produção sob uso sustentado (é endpoint não-oficial — risco de
+bloqueio/rate limit não testado); testes de rota com banco (ver Fase 7) —
+todas as rotas foram exercitadas manualmente via HTTP contra o Neon real, não
+há suíte automatizada de integração ainda.
 
 ## Próximos passos sugeridos
 
 1. Testar o login real com Google no navegador para fechar a última ponta da
    autenticação (criação de usuário novo pelo fluxo OAuth de verdade).
-2. Fase 3 — motor de backtest cronológico (agora com uma fonte de dados real
-   disponível via Yahoo Finance para testar contra mercado de verdade).
-3. Fase 2.5 (shadcn/ui) para começar o frontend.
+2. Fase 2.5 (shadcn/ui) para começar o frontend — agora com toda a API
+   (importação, análise, ranking e backtest) pronta para consumir.
+3. Fase 4 (processamento assíncrono) se os backtests/análises maiores
+   começarem a esbarrar no tempo máximo de execução do request.

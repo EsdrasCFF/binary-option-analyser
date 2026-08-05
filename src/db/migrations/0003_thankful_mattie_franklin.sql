@@ -1,0 +1,1 @@
+ALTER TABLE "backtests" ADD COLUMN "error_message" text;
