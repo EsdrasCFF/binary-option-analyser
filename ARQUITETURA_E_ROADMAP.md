@@ -168,8 +168,18 @@ Todas as rotas estão implementadas e autenticadas de verdade. Pendências conhe
   automatizada é do motor puro (`core` + `analysis`); as rotas foram exercitadas
   manualmente via HTTP.
 
-### Fase 2.5 — shadcn/ui
-`npx shadcn@latest init` (Tailwind v4 já configurado, compatível). Necessário para os componentes de formulário/tabela das 16 telas.
+### ✅ Fase 2.5 — shadcn/ui — CONCLUÍDA
+
+`npx shadcn@latest init` com **Base UI** (não Radix) — desde julho/2026 é o
+default da própria ferramenta (preset `base-nova`). Diferença que vale
+lembrar: componentes Base UI usam a prop **`render`**, não `asChild` do
+Radix — ex. `<Button nativeButton={false} render={<Link href="..." />}>`
+(o `nativeButton={false}` é necessário sempre que o alvo não é um `<button>`
+nativo, senão o console avisa sobre semântica de acessibilidade perdida). Os
+`Select` também precisam do prop `items` (mapa valor→rótulo) para o trigger
+mostrar o rótulo em vez do valor bruto — sem isso, um select como
+`dojiPolicy` mostraria "count_as_loss" na tela em vez de "Contar como
+derrota".
 
 ### ✅ Fase 3 — Motor de Backtest cronológico — CONCLUÍDA
 
@@ -232,11 +242,63 @@ como já modelada em `import_jobs`/`analyses.status`/`backtests.status`) para
 importações e backtests longos, com progresso consultável pelo frontend via
 polling (`TanStack Query` com `refetchInterval`).
 
-### Fase 5 — Frontend (as 16 telas)
-Next.js App Router + Tailwind + shadcn/ui + TanStack Query + React Hook Form +
-Zod + Recharts, consumindo as rotas da Fase 2. Os schemas Zod dos formulários
-podem importar os mesmos tipos de `src/lib/core`, garantindo que a validação
-do formulário e a regra de negócio nunca divirjam.
+### ✅ Fase 5 — Frontend (as 16 telas) — CONCLUÍDA
+
+Next.js App Router + Tailwind + shadcn/ui (Base UI) + TanStack Query +
+React Hook Form + Zod + Recharts, consumindo as rotas das Fases 2 e 3.
+
+**Rotas de API que faltavam e foram criadas nesta fase** (schema já existia
+desde a Fase 1, só não tinham Route Handler): `GET /api/currency-pairs`
+(lista pares com contagem de candles), `GET /api/data-providers`,
+`POST`/`GET /api/bankroll-configurations` + `DELETE /api/bankroll-configurations/:id`.
+
+**Estrutura**:
+
+| Peça | O que é |
+|---|---|
+| `src/lib/api-client/` | Cliente HTTP tipado por recurso, um arquivo por domínio (`analyses.ts`, `backtests.ts`, `pattern-results.ts`, `candles.ts`, `martingale.ts`, `bankroll-configurations.ts`, `currency-pairs.ts`, `data-providers.ts`), cada um exportando hooks do TanStack Query (`useAnalyses`, `useCreateBacktest` etc.) |
+| `src/lib/format.ts` | Formatação de exibição (moeda, %, data) — única camada onde `string` da API vira `Number`, nunca para cálculo |
+| `src/components/providers.tsx` | `QueryClientProvider` + `TooltipProvider` + `Toaster` (sonner) |
+| `src/app/(app)/layout.tsx` | Shell autenticado: sidebar + header, redireciona para `/` sem sessão |
+| `src/components/app-sidebar.tsx`, `user-menu.tsx` | Navegação lateral e menu do usuário (avatar, configurações, sair) |
+
+**As 16 telas** (rotas dentro do grupo `(app)`, exceto login que é `/`):
+`/` (login), `/dashboard`, `/import/csv`, `/import/yahoo`, `/data-providers`,
+`/analyses/new`, `/analyses`, `/analyses/[id]` (tabs "Ranking de padrões" +
+"Configuração" — cobre os itens 6 e 7 da lista confirmada com o usuário),
+`/backtests/new` (recebe `?patternResultIds=` vindo do botão "Criar backtest
+com selecionados" no ranking), `/backtests`, `/backtests/[id]` (tabs "Resumo"
+com gráficos Recharts por horário/dia da semana/par/mês + "Operações"),
+`/tools/martingale-calculator`, `/bankroll-configurations`, `/settings`.
+
+**Verificado visualmente, não só compilado**: como o projeto não tinha
+Playwright, instalei temporariamente (`--no-save`, removido ao final) e tirei
+screenshots reais de cada grupo de telas contra o Neon real, autenticado com
+uma sessão assinada manualmente (mesma técnica da Fase de autenticação),
+checando o console por erros a cada passo. Isso pegou 3 problemas reais antes
+de generalizar o padrão para as 16 telas:
+1. `Button`/`SidebarMenuButton`/`DropdownMenuItem` com `asChild` (Radix) não
+   compilava — Base UI usa `render`.
+2. `Button render={<Link .../>}` disparava aviso de acessibilidade no console
+   (`nativeButton` esperado `true` por padrão) — corrigido com
+   `nativeButton={false}`.
+3. `Select` sem a prop `items` mostrava o valor bruto (`same_direction`) em
+   vez do rótulo (`Mesma direção`) no trigger.
+
+A calculadora de Martingale testada pela UI reproduziu os mesmos valores do
+enunciado (Martingale 1 = R$7,06, Martingale 2 = R$15,37) que já eram
+verificados desde a Fase 1 — agora também pela ponta do navegador. O
+dashboard, o ranking de padrões e o detalhe do backtest renderizaram os
+mesmos números já validados via HTTP nas fases anteriores (75 operações, R$
+1.070,17 de banca final etc.).
+
+**Simplificações conscientes** (não pedidas, ficam para depois se fizerem
+falta): a Calculadora de Entradas continua sem histórico persistido (só
+calcula, não grava em `martingale_calculations`/`martingale_levels`, que
+existem no schema mas não têm rota ainda); "Configurações" da conta é
+somente leitura (nome/e-mail vêm do Google, não há edição de perfil); não há
+paginação nas tabelas de listagem (analyses/backtests) além do `limit`/`offset`
+que a API já suporta.
 
 ### Fase 6 — Deploy
 Um único deploy (Vercel, por exemplo) para o Next.js inteiro; o banco fica no
@@ -286,8 +348,13 @@ Verificado contra um Neon real (não só compilação):
   Analysis anterior, 15/jul-04/ago, M5, payout 85%, banca R$1.000, 2 níveis de
   Martingale) → 75 operações, 69 vitórias, 6 derrotas, banca final R$1.070,17,
   drawdown máx. R$52,54, profit factor 1,43 — ver seção própria acima.
+- **Frontend, as 16 telas (Fase 5)**: screenshots reais (não só compilação) de
+  cada tela contra o Neon, autenticado — dashboard, formulários, multi-select
+  de pares, ranking de padrões, gráficos do backtest, calculadora reproduzindo
+  R$7,06/R$15,37 do enunciado pela UI, dialog de configuração de banca criando
+  e persistindo de verdade. Zero erros de console. Ver seção própria acima.
 - `npm run test` → 69 testes. `npm run typecheck` → sem erros. `npm run build` →
-  limpo, 13 rotas.
+  limpo, 30 rotas (16 telas + 14 rotas de API).
 
 **Segurança**: o projeto não tinha `.gitignore` até a sessão que implementou o
 Yahoo Finance — o `.env` com a connection string real do Neon estava exposto
@@ -295,18 +362,22 @@ para `git add` (nunca houve commit, então nada vazou). Criado antes de
 qualquer outra alteração.
 
 **Ainda não verificado**: login real via Google no navegador (só um humano
-pode clicar no consentimento — verifiquei o resto do caminho com uma sessão
-assinada manualmente, ver seção de autenticação); comportamento do Yahoo
-Finance em produção sob uso sustentado (é endpoint não-oficial — risco de
-bloqueio/rate limit não testado); testes de rota com banco (ver Fase 7) —
-todas as rotas foram exercitadas manualmente via HTTP contra o Neon real, não
-há suíte automatizada de integração ainda.
+pode clicar no consentimento — verifiquei o resto do caminho, tanto da API
+quanto das 16 telas, com uma sessão assinada manualmente, ver seção de
+autenticação); comportamento do Yahoo Finance em produção sob uso sustentado
+(é endpoint não-oficial — risco de bloqueio/rate limit não testado); testes
+de rota com banco e testes de componente no frontend (ver Fase 7) — tudo foi
+exercitado manualmente contra o Neon real, não há suíte automatizada de
+integração/componente ainda.
 
 ## Próximos passos sugeridos
 
 1. Testar o login real com Google no navegador para fechar a última ponta da
-   autenticação (criação de usuário novo pelo fluxo OAuth de verdade).
-2. Fase 2.5 (shadcn/ui) para começar o frontend — agora com toda a API
-   (importação, análise, ranking e backtest) pronta para consumir.
-3. Fase 4 (processamento assíncrono) se os backtests/análises maiores
-   começarem a esbarrar no tempo máximo de execução do request.
+   autenticação (criação de usuário novo pelo fluxo OAuth de verdade) — agora
+   dá pra fazer isso direto pela tela de login em vez de só pela API.
+2. Persistir o histórico da Calculadora de Entradas (`martingale_calculations`/
+   `martingale_levels` já existem no schema, só falta a rota) — ou Fase 4
+   (processamento assíncrono) se análises/backtests maiores começarem a
+   esbarrar no tempo máximo de execução do request.
+3. Fase 6 (deploy) — a aplicação já está funcionalmente completa
+   (importar → analisar → ranquear → simular → visualizar).
