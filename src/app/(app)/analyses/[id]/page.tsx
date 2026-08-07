@@ -11,6 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatDateTime, formatPercent, formatStatus } from "@/lib/format";
 
 export default function AnalysisDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -107,7 +108,16 @@ export default function AnalysisDetailPage({ params }: { params: Promise<{ id: s
                     </TableCell>
                     <TableCell className="text-right font-medium">{formatPercent(p.repetitionPct)}</TableCell>
                     <TableCell className="text-right">{p.totalValid}</TableCell>
-                    <TableCell className="text-muted-foreground">{formatStatus(p.status)}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={<span className="cursor-help underline decoration-dotted underline-offset-4" />}
+                        >
+                          {formatStatus(p.status)}
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-64">{p.confidenceNote}</TooltipContent>
+                      </Tooltip>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

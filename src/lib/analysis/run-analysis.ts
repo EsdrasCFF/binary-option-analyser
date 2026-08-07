@@ -79,11 +79,24 @@ function isWithinWindow(
 }
 
 /**
- * Analisa todos os pares/horários presentes nos candles fornecidos.
- * O resultado já vem filtrado por `minRepetitionPct` e ordenado por
- * percentual de repetição (mesma regra de `rankPatterns`).
+ * Descobre os pares (symbol, horário) que realmente existem nos candles
+ * fornecidos (respeitando janela de horário e dias da semana) e roda o motor
+ * estatístico (`analyzeTimeSlot`) em cada combinação. Devolve TODOS os
+ * resultados, sem filtrar por `minRepetitionPct`/`topN` — quem chama decide
+ * o que fazer com eles.
+ *
+ * Extraído de `runAnalysis` para ser reaproveitado pelo motor de backtest
+ * (`run-backtest.ts`), que precisa rodar exatamente essa descoberta várias
+ * vezes (uma por dia simulado, com o corte de candles indo até um ponto
+ * diferente a cada vez — "rolling window").
  */
-export function runAnalysis(candles: Candle[], config: AnalysisRunConfig): PatternResult[] {
+export function analyzeAllSlots(
+  candles: Candle[],
+  config: Pick<
+    AnalysisRunConfig,
+    "timeframe" | "timezone" | "startTime" | "endTime" | "weekdays" | "dojiTolerancePct" | "dojiPolicy" | "minValidDays"
+  >
+): PatternResult[] {
   const relevant = candles.filter((c) => c.timeframe === config.timeframe);
   const weekdaySet =
     config.weekdays && config.weekdays.length > 0 ? new Set(config.weekdays) : undefined;
@@ -131,6 +144,16 @@ export function runAnalysis(candles: Candle[], config: AnalysisRunConfig): Patte
     }
   }
 
+  return results;
+}
+
+/**
+ * Analisa todos os pares/horários presentes nos candles fornecidos.
+ * O resultado já vem filtrado por `minRepetitionPct` e ordenado por
+ * percentual de repetição (mesma regra de `rankPatterns`).
+ */
+export function runAnalysis(candles: Candle[], config: AnalysisRunConfig): PatternResult[] {
+  const results = analyzeAllSlots(candles, config);
   return rankPatterns(results, {
     sortBy: "repetitionPct",
     minPct: config.minRepetitionPct,

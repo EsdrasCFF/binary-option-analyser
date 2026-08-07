@@ -1,65 +1,75 @@
 /**
  * Motor de backtest cronológico.
  *
- * Diferença fundamental para `run-analysis.ts`: aqui a direção predominante de
- * cada horário é recalculada a cada dia simulado, usando **apenas os candles
- * anteriores àquele dia** (rolling window). A Analysis estática usa o período
- * inteiro de uma vez — reaproveitar esse resultado direto no backtest seria
- * "olhar o futuro" (look-ahead bias), o erro clássico que invalida um backtest.
+ * Mecânica (definida junto com o usuário, ver conversa da Fase 3.1):
+ * o Martingale NÃO persegue a perda na vela seguinte do mesmo horário — ele
+ * percorre os OUTROS horários mais fortes do dia, em ordem crescente de
+ * horário. A cada dia simulado, o motor:
  *
- * Uma "operação" pode abranger vários candles: se o candle de abertura perder,
- * o Martingale persegue a perda no candle seguinte da mesma série (mesmo
- * símbolo+timeframe), com o valor do próximo nível, até vencer ou esgotar
- * `martingaleLevels` — nunca no dia seguinte. Por isso uma operação conta como
- * UMA linha de resultado mesmo cobrindo vários candles.
+ *   1. Refaz o ranking do zero (mesma lógica da Analysis, via
+ *      `analyzeAllSlots`), usando **só candles anteriores àquele dia**
+ *      (rolling window — nunca olha o futuro).
+ *   2. Filtra pelos mesmos limiares da Analysis original (`minRepetitionPct`,
+ *      `minValidDays`) e pega os top N (`slotCount` = quantidade de horários
+ *      que o usuário selecionou na tela de ranking).
+ *   3. Ordena esses N horários por horário do dia (crescente) — essa é a
+ *      "escada" do Martingale do dia: nível 0 = horário mais cedo.
+ *   4. Entra no nível 0; se perder, tenta o nível 1 (próximo horário da
+ *      escada, não o próximo candle do mesmo horário); e assim por diante,
+ *      até vencer ou esgotar a escada do dia.
  *
- * Puro: recebe `Candle[]` já carregados e devolve operações + métricas
- * agregadas, sem tocar banco — mesma separação usada em `run-analysis.ts`.
+ * Consequências importantes desse desenho:
+ * - Uma operação = um dia inteiro (no máximo 1 operação por dia), não mais
+ *   uma operação por horário selecionado.
+ * - Os "níveis de Martingale" de cada dia são `slotCount - 1`, MAS podem ser
+ *   menores num dia específico se nem todos os N horários passarem no
+ *   filtro de amostra/percentual naquele ponto da simulação — o motor usa o
+ *   que estiver disponível, nunca inventa horário.
+ * - Se faltar o candle de algum horário da escada naquele dia (gap de
+ *   dados), o dia inteiro é descartado (não fabrica resultado parcial).
+ *
+ * Puro: recebe `Candle[]` já carregados e devolve operações + métricas,
+ * sem tocar banco — mesma separação usada em `run-analysis.ts`.
  */
 import { Decimal } from "decimal.js";
 import { DateTime } from "luxon";
 import { Candle, Direction, DojiPolicy, classifyCandle } from "@/lib/core/candle-classifier";
-import { TimeOfDay, analyzeTimeSlot, suggestedEntryDirection } from "@/lib/core/pattern-analyzer";
+import { PatternResult, suggestedEntryDirection } from "@/lib/core/pattern-analyzer";
 import { calculateMode1, MartingaleValidationError } from "@/lib/core/martingale-calculator";
-import { formatTimeOfDay } from "@/lib/analysis/run-analysis";
-
-export interface BacktestTarget {
-  currencyPairId: string;
-  symbol: string;
-  timeframe: string;
-  timeOfDay: TimeOfDay;
-  timezone: string;
-  dojiTolerancePct: Decimal;
-  /** Mínimo de ocorrências válidas na janela retroativa para o dia ser operado (vem da Analysis original). */
-  minValidDays: number;
-}
+import { analyzeAllSlots, formatTimeOfDay } from "@/lib/analysis/run-analysis";
 
 export interface BacktestRunConfig {
+  // escopo para redescobrir/reranquear horários a cada dia (vem da Analysis original)
+  timeframe: string;
+  timezone: string;
+  startTime?: string | null;
+  endTime?: string | null;
+  weekdays?: number[] | null;
+  dojiTolerancePct: Decimal;
+  minRepetitionPct: Decimal;
+  minValidDays: number;
+  /** Quantidade de horários selecionados na tela de ranking: níveis do dia = min(slotCount, elegíveis) - 1. */
+  slotCount: number;
+
   entryStrategy: "same_direction" | "contrarian";
   payoutPct: Decimal;
   initialBankroll: Decimal;
   initialEntry: Decimal;
   minProfit: Decimal;
-  martingaleLevels: number;
   maxExposureLimit?: Decimal;
-  dailyLossLimit?: Decimal;
-  maxOperationsPerDay?: number;
   dojiPolicy: DojiPolicy;
-  /** Guarda contra o mesmo horário local ocorrer 2x no mesmo dia (ex: troca de horário de verão). */
-  oneEntryPerTimeSlot: boolean;
   periodStart: Date;
   periodEnd: Date;
 }
 
 export interface BacktestOperationResult {
-  operationDate: string; // yyyy-MM-dd, no timezone do target
-  currencyPairId: string;
+  operationDate: string; // yyyy-MM-dd, no timezone do backtest
   symbol: string;
-  timeOfDay: string; // "HH:mm"
+  timeOfDay: string; // "HH:mm" do horário da escada que resolveu a operação
   entryDirection: Direction;
-  actualDirection: Direction; // direção do candle que resolveu a operação
+  actualDirection: Direction;
   martingaleLevelReached: number;
-  entryValue: Decimal; // valor usado no nível que resolveu
+  entryValue: Decimal;
   result: "win" | "loss" | "tie";
   profitLoss: Decimal;
   bankrollAfter: Decimal;
@@ -80,41 +90,16 @@ export interface BacktestSummary {
   losses: number;
   ties: number;
   maxDrawdown: string;
-  /** null quando não há perdas no período (divisão por zero não se aplica). */
   profitFactor: string | null;
-  byCurrencyPair: Record<string, GroupStats>;
+  bySymbol: Record<string, GroupStats>;
   byTimeOfDay: Record<string, GroupStats>;
-  byWeekday: Record<string, GroupStats>; // "1".."7" (luxon: 1=segunda)
-  byMonth: Record<string, GroupStats>; // "yyyy-MM"
+  byWeekday: Record<string, GroupStats>;
+  byMonth: Record<string, GroupStats>;
 }
 
 export interface BacktestRunResult {
   operations: BacktestOperationResult[];
   summary: BacktestSummary;
-}
-
-function candleKey(symbol: string, timeframe: string): string {
-  return `${symbol}|${timeframe}`;
-}
-
-/** Índice por (symbol,timeframe): candles ordenados + mapa openTime ISO -> candle, para achar "o próximo candle" sem depender de duração fixa do timeframe. */
-function indexCandles(candles: Candle[]) {
-  const bySeries = new Map<string, Candle[]>();
-  for (const c of candles) {
-    const key = candleKey(c.symbol, c.timeframe);
-    let list = bySeries.get(key);
-    if (!list) {
-      list = [];
-      bySeries.set(key, list);
-    }
-    list.push(c);
-  }
-  const byOpenTime = new Map<string, Map<string, Candle>>();
-  for (const [key, list] of bySeries) {
-    list.sort((a, b) => a.openTime.getTime() - b.openTime.getTime());
-    byOpenTime.set(key, new Map(list.map((c) => [c.openTime.toISOString(), c])));
-  }
-  return { bySeries, byOpenTime };
 }
 
 function emptyGroupStats(): GroupStats {
@@ -131,94 +116,74 @@ function addToGroup(map: Record<string, GroupStats>, key: string, op: BacktestOp
   map[key] = stats;
 }
 
-/** Uma tentativa de operação: (target, dia local) — pode gerar 0 ou mais operações reais se oneEntryPerTimeSlot=false e o horário ocorrer >1x no dia (ex: DST). */
-interface Candidate {
-  target: BacktestTarget;
-  localDate: string; // yyyy-MM-dd
-  entryCandle: Candle;
-}
-
-function buildCandidates(
-  target: BacktestTarget,
-  seriesCandles: Candle[],
-  config: BacktestRunConfig
-): Candidate[] {
-  const candidates: Candidate[] = [];
-  const seenDates = new Set<string>();
-
-  for (const candle of seriesCandles) {
-    const local = DateTime.fromJSDate(candle.openTime, { zone: "utc" }).setZone(target.timezone);
-    if (local.hour !== target.timeOfDay.hour || local.minute !== target.timeOfDay.minute) continue;
-    if (candle.openTime < config.periodStart || candle.openTime > config.periodEnd) continue;
-
-    const localDate = local.toISODate()!;
-    if (config.oneEntryPerTimeSlot && seenDates.has(localDate)) continue;
-    seenDates.add(localDate);
-
-    candidates.push({ target, localDate, entryCandle: candle });
+function enumerateLocalDays(periodStart: Date, periodEnd: Date, timezone: string): string[] {
+  const start = DateTime.fromJSDate(periodStart, { zone: "utc" }).setZone(timezone).startOf("day");
+  const end = DateTime.fromJSDate(periodEnd, { zone: "utc" }).setZone(timezone).startOf("day");
+  const days: string[] = [];
+  for (let cur = start; cur <= end; cur = cur.plus({ days: 1 })) {
+    days.push(cur.toISODate()!);
   }
-  return candidates;
+  return days;
 }
 
-export function runBacktest(
-  candles: Candle[],
-  targets: BacktestTarget[],
-  config: BacktestRunConfig
-): BacktestRunResult {
-  const { bySeries, byOpenTime } = indexCandles(candles);
+/** Índice candle por (symbol, dia local, "HH:mm" local) — primeira ocorrência vence (guarda contra DST duplicado). */
+function indexBySymbolDayTime(candles: Candle[], timezone: string): Map<string, Candle> {
+  const map = new Map<string, Candle>();
+  for (const c of candles) {
+    const local = DateTime.fromJSDate(c.openTime, { zone: "utc" }).setZone(timezone);
+    const key = `${c.symbol}|${local.toISODate()}|${formatTimeOfDay({ hour: local.hour, minute: local.minute })}`;
+    if (!map.has(key)) map.set(key, c);
+  }
+  return map;
+}
 
-  const allCandidates = targets.flatMap((target) =>
-    buildCandidates(target, bySeries.get(candleKey(target.symbol, target.timeframe)) ?? [], config)
-  );
-  allCandidates.sort((a, b) => a.entryCandle.openTime.getTime() - b.entryCandle.openTime.getTime());
+function minutesOf(time: { hour: number; minute: number }): number {
+  return time.hour * 60 + time.minute;
+}
+
+export function runBacktest(candles: Candle[], config: BacktestRunConfig): BacktestRunResult {
+  const relevant = candles.filter((c) => c.timeframe === config.timeframe);
+  const candleIndex = indexBySymbolDayTime(relevant, config.timezone);
+  const days = enumerateLocalDays(config.periodStart, config.periodEnd, config.timezone);
 
   let bankroll = config.initialBankroll;
   let peakBankroll = config.initialBankroll;
   let maxDrawdown = new Decimal(0);
 
-  const dayOperationsCount = new Map<string, number>();
-  const dayRealizedLoss = new Map<string, Decimal>();
-
   const operations: BacktestOperationResult[] = [];
-  const byCurrencyPair: Record<string, GroupStats> = {};
+  const bySymbol: Record<string, GroupStats> = {};
   const byTimeOfDay: Record<string, GroupStats> = {};
   const byWeekday: Record<string, GroupStats> = {};
   const byMonth: Record<string, GroupStats> = {};
 
-  for (const candidate of allCandidates) {
-    const { target, localDate, entryCandle } = candidate;
-    const dayKey = `${target.timezone}|${localDate}`;
+  for (const day of days) {
+    const startOfDayUtc = DateTime.fromISO(day, { zone: config.timezone }).toUTC().toJSDate();
+    const priorCandles = relevant.filter((c) => c.openTime < startOfDayUtc);
 
-    if (config.maxOperationsPerDay !== undefined) {
-      const opened = dayOperationsCount.get(dayKey) ?? 0;
-      if (opened >= config.maxOperationsPerDay) continue;
-    }
-    if (config.dailyLossLimit !== undefined) {
-      const lossToday = dayRealizedLoss.get(dayKey) ?? new Decimal(0);
-      if (lossToday.gte(config.dailyLossLimit)) continue;
-    }
-
-    // 1) rolling window: só candles ANTERIORES ao dia simulado (nunca o próprio dia ou o futuro)
-    const startOfDayUtc = DateTime.fromISO(localDate, { zone: target.timezone }).toUTC().toJSDate();
-    const seriesCandles = bySeries.get(candleKey(target.symbol, target.timeframe)) ?? [];
-    const priorCandles = seriesCandles.filter((c) => c.openTime < startOfDayUtc);
-
-    const rolling = analyzeTimeSlot({
-      candles: priorCandles,
-      symbol: target.symbol,
-      timeframe: target.timeframe,
-      targetTime: target.timeOfDay,
-      timezone: target.timezone,
-      dojiTolerancePct: target.dojiTolerancePct,
+    // 1) refaz o ranking do zero, só com o que já era conhecido antes deste dia
+    const allSlots = analyzeAllSlots(priorCandles, {
+      timeframe: config.timeframe,
+      timezone: config.timezone,
+      startTime: config.startTime,
+      endTime: config.endTime,
+      weekdays: config.weekdays,
+      dojiTolerancePct: config.dojiTolerancePct,
       dojiPolicy: config.dojiPolicy,
+      minValidDays: config.minValidDays,
     });
 
-    if (rolling.totalValid < target.minValidDays) continue; // amostra insuficiente até aqui: não opera
+    const eligible = allSlots
+      .filter((r) => r.totalValid >= config.minValidDays && r.repetitionPct.gte(config.minRepetitionPct))
+      .sort((a, b) => b.repetitionPct.cmp(a.repetitionPct));
 
-    const entryDirection = suggestedEntryDirection(rolling, config.entryStrategy === "contrarian");
-    if (entryDirection === null) continue;
+    const ladder = eligible
+      .slice(0, config.slotCount)
+      .sort((a, b) => minutesOf(a.timeOfDay) - minutesOf(b.timeOfDay));
 
-    // 2) monta o cronograma de Martingale contra a banca ATUAL (compounding)
+    if (ladder.length === 0) continue; // nenhum horário elegível hoje: não opera
+
+    // 2) monta o cronograma de Martingale contra a banca ATUAL, com os níveis disponíveis hoje
+    const levelsToday = ladder.length - 1;
     let schedule;
     try {
       schedule = calculateMode1({
@@ -226,36 +191,46 @@ export function runBacktest(
         payoutPct: config.payoutPct,
         initialEntry: config.initialEntry,
         minProfit: config.minProfit,
-        martingaleLevels: config.martingaleLevels,
+        martingaleLevels: levelsToday,
       });
     } catch (e) {
-      if (e instanceof MartingaleValidationError) continue; // banca não suporta mais o cronograma: pula
+      if (e instanceof MartingaleValidationError) continue; // banca não suporta a escada de hoje: pula o dia
       throw e;
     }
     if (config.maxExposureLimit !== undefined && schedule.totalCapitalRequired.gt(config.maxExposureLimit)) {
       continue;
     }
 
-    // 3) percorre os níveis, avançando para o PRÓXIMO CANDLE da série em caso de derrota (nunca o dia seguinte)
-    let currentCandle: Candle | undefined = entryCandle;
-    let level = 0;
+    // 3) percorre a escada do dia: nível 0 = horário mais cedo
     let resolved: BacktestOperationResult | null = null;
+    for (let level = 0; level < ladder.length; level++) {
+      const slot: PatternResult = ladder[level];
+      const entryCandle = candleIndex.get(`${slot.symbol}|${day}|${formatTimeOfDay(slot.timeOfDay)}`);
+      if (!entryCandle) {
+        // falta dado justamente no horário que a escada precisava: não dá pra saber o resultado real
+        resolved = null;
+        break;
+      }
 
-    while (currentCandle && level <= config.martingaleLevels) {
+      const entryDirection = suggestedEntryDirection(slot, config.entryStrategy === "contrarian");
+      if (entryDirection === null) {
+        resolved = null;
+        break;
+      }
+
       const levelInfo = schedule.levels[level];
-      const actualDirection = classifyCandle(currentCandle, target.dojiTolerancePct);
+      const actualDirection = classifyCandle(entryCandle, config.dojiTolerancePct);
 
       if (actualDirection === Direction.DOJI) {
         if (config.dojiPolicy === DojiPolicy.IGNORE) {
-          resolved = null; // não conta como operação: nem vitória, nem derrota, nem tentativa
+          resolved = null;
           break;
         }
         if (config.dojiPolicy === DojiPolicy.COUNT_AS_TIE) {
           resolved = {
-            operationDate: localDate,
-            currencyPairId: target.currencyPairId,
-            symbol: target.symbol,
-            timeOfDay: formatTimeOfDay(target.timeOfDay),
+            operationDate: day,
+            symbol: slot.symbol,
+            timeOfDay: formatTimeOfDay(slot.timeOfDay),
             entryDirection,
             actualDirection,
             martingaleLevelReached: level,
@@ -266,7 +241,7 @@ export function runBacktest(
           };
           break;
         }
-        // COUNT_AS_LOSS: cai para o mesmo tratamento de derrota abaixo
+        // COUNT_AS_LOSS: cai no mesmo tratamento de derrota abaixo
       }
 
       const won = actualDirection === entryDirection;
@@ -274,10 +249,9 @@ export function runBacktest(
         const profit = levelInfo.netProfitAfterRecovery;
         bankroll = bankroll.plus(profit).toDecimalPlaces(2);
         resolved = {
-          operationDate: localDate,
-          currencyPairId: target.currencyPairId,
-          symbol: target.symbol,
-          timeOfDay: formatTimeOfDay(target.timeOfDay),
+          operationDate: day,
+          symbol: slot.symbol,
+          timeOfDay: formatTimeOfDay(slot.timeOfDay),
           entryDirection,
           actualDirection,
           martingaleLevelReached: level,
@@ -289,15 +263,14 @@ export function runBacktest(
         break;
       }
 
-      if (level === config.martingaleLevels) {
-        // perdeu no último nível disponível: derrota final da operação
+      if (level === ladder.length - 1) {
+        // perdeu no último horário da escada de hoje: derrota final do dia
         const loss = levelInfo.accumulatedExposure;
         bankroll = bankroll.minus(loss).toDecimalPlaces(2);
         resolved = {
-          operationDate: localDate,
-          currencyPairId: target.currencyPairId,
-          symbol: target.symbol,
-          timeOfDay: formatTimeOfDay(target.timeOfDay),
+          operationDate: day,
+          symbol: slot.symbol,
+          timeOfDay: formatTimeOfDay(slot.timeOfDay),
           entryDirection,
           actualDirection,
           martingaleLevelReached: level,
@@ -308,30 +281,18 @@ export function runBacktest(
         };
         break;
       }
-
-      // perdeu mas ainda há níveis: persegue no PRÓXIMO candle real da série
-      const key = candleKey(target.symbol, target.timeframe);
-      currentCandle = byOpenTime.get(key)?.get(currentCandle.closeTime.toISOString());
-      level += 1;
-      // se currentCandle vier undefined (gap de dados), o while termina sem `resolved`:
-      // não há como saber o resultado real, então a operação é descartada (não conta como win/loss/tie)
+      // perdeu mas ainda há horários na escada de hoje: segue pro próximo nível
     }
 
     if (resolved === null) continue;
 
     operations.push(resolved);
-    dayOperationsCount.set(dayKey, (dayOperationsCount.get(dayKey) ?? 0) + 1);
-    if (resolved.result === "loss") {
-      dayRealizedLoss.set(dayKey, (dayRealizedLoss.get(dayKey) ?? new Decimal(0)).plus(resolved.profitLoss.abs()));
-    }
-
     peakBankroll = Decimal.max(peakBankroll, bankroll);
-    const drawdown = peakBankroll.minus(bankroll);
-    maxDrawdown = Decimal.max(maxDrawdown, drawdown);
+    maxDrawdown = Decimal.max(maxDrawdown, peakBankroll.minus(bankroll));
 
-    addToGroup(byCurrencyPair, target.symbol, resolved);
+    addToGroup(bySymbol, resolved.symbol, resolved);
     addToGroup(byTimeOfDay, resolved.timeOfDay, resolved);
-    const local = DateTime.fromISO(localDate, { zone: target.timezone });
+    const local = DateTime.fromISO(day, { zone: config.timezone });
     addToGroup(byWeekday, String(local.weekday), resolved);
     addToGroup(byMonth, local.toFormat("yyyy-MM"), resolved);
   }
@@ -357,7 +318,7 @@ export function runBacktest(
       ties,
       maxDrawdown: maxDrawdown.toFixed(2),
       profitFactor: grossLoss.gt(0) ? grossProfit.div(grossLoss).toFixed(4) : null,
-      byCurrencyPair,
+      bySymbol,
       byTimeOfDay,
       byWeekday,
       byMonth,

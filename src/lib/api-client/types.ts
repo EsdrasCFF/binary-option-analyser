@@ -206,7 +206,7 @@ export interface BacktestSummary {
   ties: number;
   maxDrawdown: string;
   profitFactor: string | null;
-  byCurrencyPair: Record<string, GroupStats>;
+  bySymbol: Record<string, GroupStats>;
   byTimeOfDay: Record<string, GroupStats>;
   byWeekday: Record<string, GroupStats>;
   byMonth: Record<string, GroupStats>;
@@ -221,6 +221,7 @@ export interface Backtest {
   initialBankroll: string;
   initialEntry: string;
   minProfit: string;
+  /** Derivado: patternResultIds.length - 1 (não é mais informado pelo usuário). */
   martingaleLevels: number;
   maxExposureLimit: string | null;
   dailyLossLimit: string | null;
@@ -242,18 +243,15 @@ export interface Backtest {
 }
 
 export interface CreateBacktestInput {
+  /** Todos precisam vir da mesma análise; a quantidade define os níveis de Martingale. */
   patternResultIds: string[];
   entryStrategy: EntryStrategy;
   payoutPct: string;
   initialBankroll: string;
   initialEntry: string;
   minProfit: string;
-  martingaleLevels: number;
   maxExposureLimit?: string;
-  dailyLossLimit?: string;
-  maxOperationsPerDay?: number;
   dojiPolicy: DojiPolicy;
-  oneEntryPerTimeSlot: boolean;
   periodStart: string;
   periodEnd: string;
 }

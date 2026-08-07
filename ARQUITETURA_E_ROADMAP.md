@@ -55,13 +55,14 @@ em vez de cortar silenciosamente.
 
 `src/lib/backtest/` — motor de backtest cronológico, ver seção própria abaixo.
 
-Testes (Vitest): **69 passando** — 36 do motor de domínio (incluindo `topN` em
+Testes (Vitest): **70 passando** — 36 do motor de domínio (incluindo `topN` em
 `rankPatterns`), 11 de `run-analysis` (exemplo do enunciado incluso: 30 dias, 24
 PUT, 6 CALL, 80%; timezone; janela de horários; dias da semana; ordenação, filtro
 e `topN`), 10 de `yahoo-finance` (parsing, truncamento de janela, tratamento de
-erro — com fetch mockado, sem depender de rede) e 12 de `run-backtest`
-(não-olhar-o-futuro, vitória/derrota em cada nível do Martingale, as 3
-políticas de DOJI, limites diários, `contrarian`, agregação por grupo).
+erro — com fetch mockado, sem depender de rede) e 13 de `run-backtest`
+(cascata entre horários da escada, não pela força do ranking, esgotamento,
+as 3 políticas de DOJI, `contrarian`, não-olhar-o-futuro, agregação por grupo
+— ver seção própria da Fase 3 para o desenho atual do motor).
 
 `src/db/schema.ts`: schema **Drizzle ORM** com as 14 entidades do domínio (User, DataProvider, CurrencyPair, Candle, Analysis, AnalysisConfiguration, PatternResult, Backtest, BacktestOperation, BankrollConfiguration, MartingaleCalculation, MartingaleLevel, ImportJob, AuditLog), índices em par+timeframe+horário (a consulta mais frequente do sistema) e foreign keys corretas. Migration inicial já gerada e validada em `src/db/migrations/0000_bumpy_power_pack.sql`.
 
@@ -72,7 +73,7 @@ políticas de DOJI, limites diários, `contrarian`, agregação por grupo).
 ```bash
 npm install
 cp .env.example .env.local   # editar com sua connection string do Neon
-npm run test                 # 45 testes (motor de domínio + orquestração)
+npm run test                 # 70 testes (motor de domínio + orquestração + backtest)
 npm run typecheck
 npm run dev                  # http://localhost:3000
 ```
@@ -187,53 +188,68 @@ derrota".
 
 | Arquivo | Responsabilidade |
 |---|---|
-| `run-backtest.ts` | **Puro**: recebe `Candle[]` + os horários selecionados + config, devolve operações + métricas. Sem banco, sem HTTP |
-| `backtest-service.ts` | Carrega candles via `DbCandleProvider`, chama `runBacktest`, persiste `backtest_operations` e atualiza `backtests.status`/`summary` |
+| `run-backtest.ts` | **Puro**: recebe `Candle[]` + o escopo (herdado da Analysis) + config, devolve operações + métricas. Sem banco, sem HTTP |
+| `backtest-service.ts` | Carrega candles via `DbCandleProvider`, resolve o escopo pela `AnalysisConfiguration` de origem, chama `runBacktest`, persiste `backtest_operations` e atualiza `backtests.status`/`summary` |
 
-Como funciona, ponto a ponto:
-- **Sem look-ahead**: para cada dia simulado, a direção predominante de cada
-  horário é recalculada com `analyzeTimeSlot` usando **só os candles
-  anteriores àquele dia** (`analyzeTimeSlot` já existia da Fase 1/2; aqui é
-  chamado uma vez por dia simulado, não uma vez para o período inteiro). Um
-  teste dedicado prova isso: histórico 100% PUT + período do backtest 100%
-  CALL → o motor prevê PUT em todos os dias (só sabia do histórico) e perde
-  sempre, em vez de "trapacear" com o resultado que só existiria no futuro.
-- **Martingale persegue no próximo candle, não no dia seguinte**: se o candle
-  de abertura perde, o motor avança para o candle seguinte da mesma série
-  (`symbol+timeframe`, pelo `closeTime` exato) com o valor do próximo nível de
-  `martingale-calculator.ts`, até vencer ou esgotar `martingaleLevels`. Uma
-  operação = uma linha de resultado, mesmo cobrindo vários candles.
-- **DOJI no candle real**: `dojiPolicy` do backtest decide — `ignore` descarta
-  a operação (não conta nem como vitória nem derrota), `count_as_tie` fecha a
-  operação com lucro zero, `count_as_loss` conta como derrota normal (pode
-  acionar o Martingale).
-- **Limites de risco viram restrições de verdade**: `dailyLossLimit` para de
-  abrir operações no dia após a perda acumulada atingir o limite;
-  `maxOperationsPerDay` capa o total de operações abertas no dia (somando
-  todos os horários selecionados); `maxExposureLimit` recusa abrir uma
-  operação cujo cronograma de Martingale exigiria mais que o limite.
-- Se a banca atual não suporta mais o cronograma configurado
-  (`MartingaleValidationError`), a operação é pulada, não derruba o backtest.
-- Se faltar o candle seguinte na perseguição do Martingale (gap de dados), a
-  operação é descartada em vez de fingir um resultado.
+**Mecânica redesenhada em conjunto com o usuário** — a primeira versão
+perseguia a perda no candle seguinte do mesmo horário; não era isso que
+fazia sentido pro caso de uso real. Como funciona hoje:
 
-Rotas novas: `GET /api/backtests/:id` (detalhe + `summary` agregado) e
-`GET /api/backtests/:id/operations` (lista paginada, filtra por par/horário/
-resultado). `POST /api/backtests` agora executa de verdade (mesmo padrão
-`?process=false` da Analysis).
+- **A cada dia simulado, o motor refaz o ranking do zero** — mesma lógica da
+  Analysis (`analyzeAllSlots`, extraída de `run-analysis.ts` para ser
+  reaproveitada aqui), usando **só candles anteriores àquele dia** (rolling,
+  nunca olha o futuro) e os mesmos limiares (`minRepetitionPct`,
+  `minValidDays`) da análise de origem dos horários escolhidos.
+- **Pega os top N do dia** (N = quantidade de horários que o usuário
+  selecionou na tela de ranking — não os horários literais, que podem não
+  ser mais os melhores dia após dia) e ordena por horário **crescente**: essa
+  é a escada do Martingale daquele dia especificamente.
+- **O Martingale persegue no PRÓXIMO HORÁRIO DA ESCADA, não no candle
+  seguinte do mesmo horário nem no dia seguinte**: entra no horário mais cedo
+  (nível 0); se perder, tenta o segundo horário mais cedo da escada (nível 1,
+  com o valor de recuperação); e assim por diante até vencer ou esgotar a
+  escada do dia. Uma operação = **um dia inteiro** (no máximo 1 por dia), não
+  mais uma por horário selecionado.
+- Se num dia específico nem todos os N horários selecionados forem elegíveis
+  (amostra ainda insuficiente para algum), a escada daquele dia fica menor —
+  usa o que houver, nunca inventa horário.
+- Se faltar o candle de algum horário da escada naquele dia (gap de dados), o
+  **dia inteiro é descartado** (não fabrica resultado parcial).
+- **DOJI no candle que resolveria a operação**: `dojiPolicy` decide —
+  `ignore` descarta o dia, `count_as_tie` fecha com lucro zero,
+  `count_as_loss` conta como derrota normal (segue pro próximo horário da
+  escada).
+- `maxExposureLimit` recusa abrir a operação do dia se o custo total da
+  escada ultrapassar o limite. (`dailyLossLimit`/`maxOperationsPerDay` saíram
+  do desenho — com no máximo 1 operação por dia, os dois ficaram redundantes
+  com `maxExposureLimit`.)
+- Se a banca atual não suporta mais o cronograma do dia
+  (`MartingaleValidationError`), o dia é pulado, não derruba o backtest.
 
-**Testes**: 12 novos em `run-backtest.test.ts` (69 no total) — incluindo o
-teste de não-olhar-o-futuro acima, vitória/derrota em cada nível, as 3
-políticas de DOJI, `dailyLossLimit`, `maxOperationsPerDay`, `contrarian` e
-agregação por par/horário/dia da semana/mês.
+**API**: `patternResultIds` precisam vir todos da **mesma análise**
+(validado na criação — é de lá que vem o escopo reaproveitado a cada dia).
+`martingaleLevels` não é mais informado pelo usuário: é derivado
+(`patternResultIds.length - 1`). Rotas `GET /api/backtests/:id` (detalhe +
+`summary`) e `GET /api/backtests/:id/operations` (paginada, filtra por
+resultado) inalteradas.
 
-**Verificado com dados reais**: rodei um backtest de EUR/GBP (mesmos 5
-horários da Analysis testada na sessão anterior, 15/jul a 04/ago, M5, payout
-85%, banca R$1.000, 2 níveis de Martingale) contra o Neon real — 75 operações,
-69 vitórias, 6 derrotas, banca final R$1.070,17, drawdown máximo R$52,54,
-profit factor 1,43. As 6 derrotas bateram exatamente com o resumo agregado
-(todas no nível 2, mesmo valor de perda cada). Isolamento entre usuários
-confirmado na rota de detalhe (404 para o backtest de outro usuário).
+**Testes**: 13 em `run-backtest.test.ts` (70 no total) — cascata entre
+horários diferentes (vence no segundo, não no primeiro), escada ordenada por
+horário e não pela força do ranking, esgotamento da escada, menos elegíveis
+que o selecionado, nenhum elegível, gap de dados descarta o dia, as 3
+políticas de DOJI, `contrarian`, não-olhar-o-futuro, `maxExposureLimit` e
+agregação por símbolo/horário/dia da semana/mês.
+
+**Verificado com dados reais**: EUR/USD 15m, 4 horários selecionados
+(contrarian, payout 85%, banca R$1.000) contra o Neon real — 10 operações em
+15 dias simulados, banca final R$957,87. Confirmação mais importante: os
+horários que aparecem no resultado (`02:45`, `04:15`, `09:30`...) são
+**diferentes** dos 4 horários originalmente selecionados (`20:45`, `23:45`,
+`21:45`, `19:15`) — prova que a redescoberta diária está de fato substituindo
+horários por outros melhores, não fixando a seleção inicial. Um dia específico
+(08/07) mostrou a escada completa sendo esgotada (4 níveis, a última tentativa
+resolvendo em DOJI contado como derrota) com a perda batendo exatamente com a
+exposição acumulada do nível 3.
 
 ### Fase 4 — Processamento assíncrono
 Sem Celery/Redis nesta stack: usar **Vercel Queues / Inngest / Trigger.dev**
@@ -288,9 +304,11 @@ de generalizar o padrão para as 16 telas:
 A calculadora de Martingale testada pela UI reproduziu os mesmos valores do
 enunciado (Martingale 1 = R$7,06, Martingale 2 = R$15,37) que já eram
 verificados desde a Fase 1 — agora também pela ponta do navegador. O
-dashboard, o ranking de padrões e o detalhe do backtest renderizaram os
-mesmos números já validados via HTTP nas fases anteriores (75 operações, R$
-1.070,17 de banca final etc.).
+dashboard, o ranking de padrões e o detalhe do backtest renderizaram
+corretamente os dados reais da época (75 operações, R$1.070,17 de banca
+final). *Números históricos desta verificação específica — o motor de
+backtest foi redesenhado depois (ver seção da Fase 3 acima); a mecânica de
+renderização da tela não mudou, só o cálculo por trás.*
 
 **Simplificações conscientes** (não pedidas, ficam para depois se fizerem
 falta): a Calculadora de Entradas continua sem histórico persistido (só
@@ -344,16 +362,18 @@ Verificado contra um Neon real (não só compilação):
   acima de X%" descrito pelo usuário. Confirmado que análises criadas antes
   dessa coluna existir (`top_n`) migraram com o default (10) sem quebrar.
 - **Autenticação real (Auth.js v5 + Google)**: ver seção própria acima.
-- **Motor de backtest cronológico (Fase 3)**: EUR/GBP real (5 horários da
-  Analysis anterior, 15/jul-04/ago, M5, payout 85%, banca R$1.000, 2 níveis de
-  Martingale) → 75 operações, 69 vitórias, 6 derrotas, banca final R$1.070,17,
-  drawdown máx. R$52,54, profit factor 1,43 — ver seção própria acima.
+- **Motor de backtest cronológico (Fase 3, mecânica atual — escada entre
+  horários)**: EUR/USD 15m real, 4 horários selecionados (contrarian, payout
+  85%, banca R$1.000) → 10 operações em 15 dias simulados, banca final
+  R$957,87. Confirmado que os horários que aparecem no resultado são
+  diferentes dos 4 originalmente selecionados (a redescoberta diária está
+  de fato trocando por horários melhores) — ver seção própria acima.
 - **Frontend, as 16 telas (Fase 5)**: screenshots reais (não só compilação) de
   cada tela contra o Neon, autenticado — dashboard, formulários, multi-select
   de pares, ranking de padrões, gráficos do backtest, calculadora reproduzindo
   R$7,06/R$15,37 do enunciado pela UI, dialog de configuração de banca criando
   e persistindo de verdade. Zero erros de console. Ver seção própria acima.
-- `npm run test` → 69 testes. `npm run typecheck` → sem erros. `npm run build` →
+- `npm run test` → 70 testes. `npm run typecheck` → sem erros. `npm run build` →
   limpo, 30 rotas (16 telas + 14 rotas de API).
 
 **Segurança**: o projeto não tinha `.gitignore` até a sessão que implementou o

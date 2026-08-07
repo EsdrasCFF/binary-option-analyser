@@ -123,7 +123,7 @@ export default function BacktestDetailPage({ params }: { params: Promise<{ id: s
                   title="Resultado por dia da semana"
                   data={toChartData(summary.byWeekday, (k) => WEEKDAY_NAMES[k] ?? k)}
                 />
-                <GroupChart title="Resultado por par" data={toChartData(summary.byCurrencyPair, (k) => k)} />
+                <GroupChart title="Resultado por par" data={toChartData(summary.bySymbol, (k) => k)} />
                 <GroupChart title="Resultado por mês" data={toChartData(summary.byMonth, (k) => k)} />
               </div>
             </>

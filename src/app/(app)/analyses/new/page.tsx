@@ -14,6 +14,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldSet } from "@/components/ui/field";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const WEEKDAYS = [
   { value: 1, label: "Seg" },
@@ -27,22 +28,38 @@ const WEEKDAYS = [
 
 const TIMEFRAMES = ["1m", "5m", "15m", "30m", "1h", "1d"];
 
-const formSchema = z.object({
-  name: z.string().min(1, "Informe um nome."),
-  currencyPairIds: z.array(z.string()).min(1, "Selecione ao menos um par."),
-  timeframe: z.string().min(1),
-  historicalDays: z.coerce.number().int().min(1).max(3650),
-  startTime: z.string().optional(),
-  endTime: z.string().optional(),
-  timezone: z.string().min(1, "Informe um timezone (ex: America/Sao_Paulo)."),
-  minRepetitionPct: z.coerce.number().min(0).max(100),
-  minValidDays: z.coerce.number().int().min(1).max(3650),
-  topN: z.coerce.number().int().min(1).max(50),
-  weekdays: z.array(z.number()),
-  entryStrategy: z.enum(["same_direction", "contrarian"]),
-  dojiTolerancePct: z.coerce.number().min(0),
-  dojiPolicy: z.enum(["ignore", "count_as_loss", "count_as_tie"]),
-});
+const formSchema = z
+  .object({
+    name: z.string().min(1, "Informe um nome."),
+    currencyPairIds: z.array(z.string()).min(1, "Selecione ao menos um par."),
+    timeframe: z.string().min(1),
+    periodMode: z.enum(["days", "range"]),
+    historicalDays: z.coerce.number().int().min(1).max(3650).optional(),
+    startDate: z.string().optional(),
+    endDate: z.string().optional(),
+    startTime: z.string().optional(),
+    endTime: z.string().optional(),
+    timezone: z.string().min(1, "Informe um timezone (ex: America/Sao_Paulo)."),
+    minRepetitionPct: z.coerce.number().min(0).max(100),
+    minValidDays: z.coerce.number().int().min(1).max(3650),
+    topN: z.coerce.number().int().min(1).max(50),
+    weekdays: z.array(z.number()),
+    entryStrategy: z.enum(["same_direction", "contrarian"]),
+    dojiTolerancePct: z.coerce.number().min(0),
+    dojiPolicy: z.enum(["ignore", "count_as_loss", "count_as_tie"]),
+  })
+  .superRefine((v, ctx) => {
+    if (v.periodMode === "days" && !v.historicalDays) {
+      ctx.addIssue({ code: "custom", path: ["historicalDays"], message: "Informe os dias de histórico." });
+    }
+    if (v.periodMode === "range") {
+      if (!v.startDate) ctx.addIssue({ code: "custom", path: ["startDate"], message: "Informe a data inicial." });
+      if (!v.endDate) ctx.addIssue({ code: "custom", path: ["endDate"], message: "Informe a data final." });
+      if (v.startDate && v.endDate && new Date(v.startDate) >= new Date(v.endDate)) {
+        ctx.addIssue({ code: "custom", path: ["endDate"], message: "Data final deve ser depois da inicial." });
+      }
+    }
+  });
 
 type FormValues = z.input<typeof formSchema>;
 
@@ -55,6 +72,7 @@ export default function NewAnalysisPage() {
     register,
     control,
     handleSubmit,
+    watch,
     formState: { errors },
   } = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -62,7 +80,10 @@ export default function NewAnalysisPage() {
       name: "",
       currencyPairIds: [],
       timeframe: "5m",
+      periodMode: "days",
       historicalDays: 30,
+      startDate: "",
+      endDate: "",
       startTime: "",
       endTime: "",
       timezone: "America/Sao_Paulo",
@@ -76,6 +97,8 @@ export default function NewAnalysisPage() {
     },
   });
 
+  const periodMode = watch("periodMode");
+
   function onSubmit(values: FormValues) {
     const parsed = formSchema.parse(values);
     createAnalysis.mutate(
@@ -83,7 +106,13 @@ export default function NewAnalysisPage() {
         name: parsed.name,
         currencyPairIds: parsed.currencyPairIds,
         timeframe: parsed.timeframe,
-        historicalDays: parsed.historicalDays,
+        historicalDays: parsed.periodMode === "days" ? parsed.historicalDays : undefined,
+        startDate:
+          parsed.periodMode === "range" && parsed.startDate
+            ? new Date(parsed.startDate).toISOString()
+            : undefined,
+        endDate:
+          parsed.periodMode === "range" && parsed.endDate ? new Date(parsed.endDate).toISOString() : undefined,
         startTime: parsed.startTime || undefined,
         endTime: parsed.endTime || undefined,
         timezone: parsed.timezone,
@@ -167,38 +196,72 @@ export default function NewAnalysisPage() {
                 <FieldError errors={[errors.currencyPairIds]} />
               </Field>
 
-              <div className="grid grid-cols-2 gap-4">
-                <Field>
-                  <FieldLabel htmlFor="timeframe">Timeframe</FieldLabel>
-                  <Controller
-                    control={control}
-                    name="timeframe"
-                    render={({ field }) => (
-                      <Select
-                        items={Object.fromEntries(TIMEFRAMES.map((tf) => [tf, tf]))}
-                        value={field.value}
-                        onValueChange={(v) => v && field.onChange(v)}
-                      >
-                        <SelectTrigger id="timeframe" className="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {TIMEFRAMES.map((tf) => (
-                            <SelectItem key={tf} value={tf}>
-                              {tf}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    )}
-                  />
-                </Field>
+              <Field>
+                <FieldLabel htmlFor="timeframe">Timeframe</FieldLabel>
+                <Controller
+                  control={control}
+                  name="timeframe"
+                  render={({ field }) => (
+                    <Select
+                      items={Object.fromEntries(TIMEFRAMES.map((tf) => [tf, tf]))}
+                      value={field.value}
+                      onValueChange={(v) => v && field.onChange(v)}
+                    >
+                      <SelectTrigger id="timeframe" className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {TIMEFRAMES.map((tf) => (
+                          <SelectItem key={tf} value={tf}>
+                            {tf}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
+              </Field>
+
+              <Field>
+                <FieldLabel>Período</FieldLabel>
+                <Controller
+                  control={control}
+                  name="periodMode"
+                  render={({ field }) => (
+                    <Tabs value={field.value} onValueChange={(v) => v && field.onChange(v)}>
+                      <TabsList>
+                        <TabsTrigger value="days">Últimos N dias (a partir de hoje)</TabsTrigger>
+                        <TabsTrigger value="range">Período específico</TabsTrigger>
+                      </TabsList>
+                    </Tabs>
+                  )}
+                />
+                <FieldDescription>
+                  Se os dados importados não chegam até hoje (ex: importou um recorte histórico fixo),
+                  use &quot;Período específico&quot; — senão a janela pode não encontrar candles suficientes.
+                </FieldDescription>
+              </Field>
+
+              {periodMode === "days" ? (
                 <Field data-invalid={!!errors.historicalDays}>
-                  <FieldLabel htmlFor="historicalDays">Dias de histórico</FieldLabel>
+                  <FieldLabel htmlFor="historicalDays">Dias de histórico (a partir de hoje)</FieldLabel>
                   <Input id="historicalDays" type="number" min={1} {...register("historicalDays")} />
                   <FieldError errors={[errors.historicalDays]} />
                 </Field>
-              </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-4">
+                  <Field data-invalid={!!errors.startDate}>
+                    <FieldLabel htmlFor="startDate">Data inicial</FieldLabel>
+                    <Input id="startDate" type="date" {...register("startDate")} />
+                    <FieldError errors={[errors.startDate]} />
+                  </Field>
+                  <Field data-invalid={!!errors.endDate}>
+                    <FieldLabel htmlFor="endDate">Data final</FieldLabel>
+                    <Input id="endDate" type="date" {...register("endDate")} />
+                    <FieldError errors={[errors.endDate]} />
+                  </Field>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-4">
                 <Field>

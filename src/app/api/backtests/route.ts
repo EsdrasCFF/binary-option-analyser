@@ -1,17 +1,24 @@
 /**
- * POST /api/backtests — cria um backtest, valida os padrões selecionados
- * pertencem ao usuário e executa a simulação (motor de `src/lib/backtest`).
- * GET  /api/backtests — lista os backtests do usuário.
+ * POST /api/backtests — cria um backtest e executa a simulação (motor de
+ * `src/lib/backtest`). GET /api/backtests — lista os backtests do usuário.
+ *
+ * `patternResultIds` são os horários escolhidos na tela de ranking de UMA
+ * análise (todos precisam vir da mesma análise — é de lá que o motor tira o
+ * escopo usado para redescobrir os melhores horários a cada dia simulado).
+ * A quantidade escolhida define os níveis de Martingale (`martingaleLevels =
+ * patternResultIds.length - 1`) — não é mais um parâmetro solto: a escada do
+ * dia é sempre "o horário mais cedo, o segundo mais cedo, ..." entre os N
+ * horários mais fortes daquele dia, não os candles seguintes de um único
+ * horário fixo. Ver `src/lib/backtest/run-backtest.ts` para o mecanismo.
  *
  * Exemplo de body:
  * {
- *   "patternResultIds": ["<uuid>"],
- *   "entryStrategy": "same_direction",
+ *   "patternResultIds": ["<uuid>", "<uuid>", "<uuid>", "<uuid>"],
+ *   "entryStrategy": "contrarian",
  *   "payoutPct": "85",
  *   "initialBankroll": "1000",
  *   "initialEntry": "5.00",
  *   "minProfit": "1.00",
- *   "martingaleLevels": 2,
  *   "periodStart": "2026-01-01T00:00:00Z",
  *   "periodEnd": "2026-02-01T00:00:00Z"
  * }
@@ -35,22 +42,19 @@ import {
   parseJsonBody,
   uuidString,
 } from "@/lib/api/http";
+import { MAX_MARTINGALE_LEVELS } from "@/lib/core/martingale-calculator";
 import { processBacktest } from "@/lib/backtest/backtest-service";
 
 const bodySchema = z
   .object({
-    patternResultIds: z.array(uuidString).min(1).max(200),
+    patternResultIds: z.array(uuidString).min(1).max(MAX_MARTINGALE_LEVELS + 1),
     entryStrategy: z.enum(["same_direction", "contrarian"]).default("same_direction"),
     payoutPct: decimalString,
     initialBankroll: decimalString,
     initialEntry: decimalString,
     minProfit: decimalString,
-    martingaleLevels: z.number().int().min(0).max(5).default(0),
     maxExposureLimit: decimalString.optional(),
-    dailyLossLimit: decimalString.optional(),
-    maxOperationsPerDay: z.number().int().min(1).max(1000).optional(),
     dojiPolicy: z.enum(["ignore", "count_as_loss", "count_as_tie"]).default("ignore"),
-    oneEntryPerTimeSlot: z.boolean().default(true),
     periodStart: isoDateTimeString,
     periodEnd: isoDateTimeString,
   })
@@ -85,10 +89,11 @@ export async function POST(req: NextRequest) {
     const body = await parseJsonBody(req, bodySchema);
     assertConsistentParameters(body);
 
-    // os padrões selecionados precisam pertencer a análises deste usuário
+    // os padrões selecionados precisam pertencer ao usuário e TODOS à mesma análise
+    // (é de lá que vem o escopo usado pra redescobrir os melhores horários a cada dia)
     const uniqueIds = Array.from(new Set(body.patternResultIds));
     const owned = await db
-      .select({ id: patternResults.id })
+      .select({ id: patternResults.id, analysisId: patternResults.analysisId })
       .from(patternResults)
       .innerJoin(analyses, eq(patternResults.analysisId, analyses.id))
       .where(and(inArray(patternResults.id, uniqueIds), eq(analyses.userId, userId)));
@@ -97,6 +102,13 @@ export async function POST(req: NextRequest) {
       throw new ApiError(
         "Um ou mais patternResultIds não existem ou não pertencem a este usuário.",
         404
+      );
+    }
+    const distinctAnalyses = new Set(owned.map((r) => r.analysisId));
+    if (distinctAnalyses.size > 1) {
+      throw new ApiError(
+        "Todos os horários selecionados precisam vir da mesma análise (cada uma tem seu próprio escopo/limiares).",
+        422
       );
     }
 
@@ -110,12 +122,9 @@ export async function POST(req: NextRequest) {
         initialBankroll: body.initialBankroll,
         initialEntry: body.initialEntry,
         minProfit: body.minProfit,
-        martingaleLevels: body.martingaleLevels,
+        martingaleLevels: uniqueIds.length - 1,
         maxExposureLimit: body.maxExposureLimit ?? null,
-        dailyLossLimit: body.dailyLossLimit ?? null,
-        maxOperationsPerDay: body.maxOperationsPerDay ?? null,
         dojiPolicy: body.dojiPolicy,
-        oneEntryPerTimeSlot: body.oneEntryPerTimeSlot,
         periodStart: new Date(body.periodStart),
         periodEnd: new Date(body.periodEnd),
         status: "pending",
