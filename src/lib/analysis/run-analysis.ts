@@ -14,7 +14,6 @@
  * configurada.
  */
 import { Decimal } from "decimal.js";
-import { DateTime } from "luxon";
 import { Candle, DojiPolicy } from "@/lib/core/candle-classifier";
 import {
   DEFAULT_STATUS_THRESHOLDS,
@@ -23,6 +22,7 @@ import {
   analyzeTimeSlot,
   rankPatterns,
 } from "@/lib/core/pattern-analyzer";
+import { localTimeOf } from "@/lib/core/local-time";
 
 export interface AnalysisRunConfig {
   timeframe: string;
@@ -104,7 +104,7 @@ export function analyzeAllSlots(
   // 1) descobrir os pares (symbol, horário) que realmente existem no período
   const slotsBySymbol = new Map<string, Map<string, TimeOfDay>>();
   for (const candle of relevant) {
-    const local = DateTime.fromJSDate(candle.openTime, { zone: "utc" }).setZone(config.timezone);
+    const local = localTimeOf(candle, config.timezone);
     if (weekdaySet && !weekdaySet.has(local.weekday)) continue;
 
     const time: TimeOfDay = { hour: local.hour, minute: local.minute };

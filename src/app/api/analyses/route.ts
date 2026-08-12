@@ -126,10 +126,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ analysis, processed: false }, { status: 201 });
     }
 
-    const result = await processAnalysis(analysis.id);
-    const [updated] = await db.select().from(analyses).where(eq(analyses.id, analysis.id)).limit(1);
-
-    return NextResponse.json({ analysis: updated, processed: true, ...result }, { status: 201 });
+    // processAnalysis já grava status="error"+errorMessage na própria análise
+    // ao falhar — aqui só evita que essa mensagem, já clara, vire um genérico
+    // "Erro interno." (500) por conta de não ser uma ApiError.
+    try {
+      const result = await processAnalysis(analysis.id);
+      const [updated] = await db.select().from(analyses).where(eq(analyses.id, analysis.id)).limit(1);
+      return NextResponse.json({ analysis: updated, processed: true, ...result }, { status: 201 });
+    } catch (e) {
+      const [failed] = await db.select().from(analyses).where(eq(analyses.id, analysis.id)).limit(1);
+      return NextResponse.json(
+        { analysis: failed, processed: true, error: failed?.errorMessage ?? (e as Error).message },
+        { status: 201 }
+      );
+    }
   });
 }
 

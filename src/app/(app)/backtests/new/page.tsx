@@ -82,11 +82,15 @@ export default function NewBacktestPage() {
       },
       {
         onSuccess: (result) => {
-          toast.success(
-            result.processed
-              ? `Backtest concluído: ${result.totalOperations ?? 0} operações.`
-              : "Backtest criado."
-          );
+          if (result.backtest.status === "error") {
+            toast.error(result.backtest.errorMessage ?? "Falha ao processar o backtest.");
+          } else {
+            toast.success(
+              result.processed
+                ? `Backtest concluído: ${result.totalOperations ?? 0} operações.`
+                : "Backtest criado."
+            );
+          }
           router.push(`/backtests/${result.backtest.id}`);
         },
         onError: (err) => {

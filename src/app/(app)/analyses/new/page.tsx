@@ -126,11 +126,15 @@ export default function NewAnalysisPage() {
       },
       {
         onSuccess: (result) => {
-          toast.success(
-            result.processed
-              ? `Análise concluída: ${result.patternsFound ?? 0} padrões encontrados.`
-              : "Análise criada."
-          );
+          if (result.analysis.status === "error") {
+            toast.error(result.analysis.errorMessage ?? "Falha ao processar a análise.");
+          } else {
+            toast.success(
+              result.processed
+                ? `Análise concluída: ${result.patternsFound ?? 0} padrões encontrados.`
+                : "Análise criada."
+            );
+          }
           router.push(`/analyses/${result.analysis.id}`);
         },
         onError: (err) => {

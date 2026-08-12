@@ -97,6 +97,22 @@ export async function processBacktest(backtestId: string): Promise<ProcessBackte
       to: backtest.periodEnd, // sem `from`: carrega todo o histórico disponível para a janela retroativa
     }).loadCandles();
 
+    // Sem isso, um período pedido além do que foi importado silenciosamente
+    // vira "0 operações" — sem pista nenhuma de que o problema é falta de
+    // dado, não falta de padrão. Falha alto e explica exatamente o gap.
+    const lastCandleTime = candles.reduce(
+      (max, c) => (c.openTime > max ? c.openTime : max),
+      new Date(0)
+    );
+    if (candles.length === 0 || lastCandleTime < backtest.periodStart) {
+      const lastDate = candles.length === 0 ? null : lastCandleTime.toISOString().slice(0, 10);
+      throw new Error(
+        candles.length === 0
+          ? `Nenhum candle importado para o escopo desta análise (timeframe ${scope.timeframe}). Importe dados antes de rodar o backtest.`
+          : `Não há candles a partir de ${backtest.periodStart.toISOString().slice(0, 10)} — o último candle importado para esse escopo é de ${lastDate}. Importe dados mais recentes ou ajuste o período do backtest.`
+      );
+    }
+
     await db.update(backtests).set({ progressPct: 40 }).where(eq(backtests.id, backtestId));
 
     const runConfig: BacktestRunConfig = {

@@ -136,10 +136,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ backtest, processed: false }, { status: 201 });
     }
 
-    const result = await processBacktest(backtest.id);
-    const [updated] = await db.select().from(backtests).where(eq(backtests.id, backtest.id)).limit(1);
-
-    return NextResponse.json({ backtest: updated, processed: true, ...result }, { status: 201 });
+    // processBacktest já grava status="error"+errorMessage no próprio backtest
+    // ao falhar (ex: sem candles no período pedido) — aqui só evita que essa
+    // mensagem, já clara, vire um genérico "Erro interno." (500) por conta de
+    // não ser uma ApiError.
+    try {
+      const result = await processBacktest(backtest.id);
+      const [updated] = await db.select().from(backtests).where(eq(backtests.id, backtest.id)).limit(1);
+      return NextResponse.json({ backtest: updated, processed: true, ...result }, { status: 201 });
+    } catch (e) {
+      const [failed] = await db.select().from(backtests).where(eq(backtests.id, backtest.id)).limit(1);
+      return NextResponse.json(
+        { backtest: failed, processed: true, error: failed?.errorMessage ?? (e as Error).message },
+        { status: 201 }
+      );
+    }
   });
 }
 

@@ -1,8 +1,10 @@
 /**
  * Motor de backtest cronológico.
  *
- * Mecânica (definida junto com o usuário, ver conversa da Fase 3.1):
- * o Martingale NÃO persegue a perda na vela seguinte do mesmo horário — ele
+ * Mecânica (definida junto com o usuário — a primeira versão perseguia a
+ * perda no candle seguinte do mesmo horário, não era isso que fazia sentido
+ * pro caso de uso real): o Martingale NÃO persegue a perda na vela seguinte
+ * do mesmo horário — ele
  * percorre os OUTROS horários mais fortes do dia, em ordem crescente de
  * horário. A cada dia simulado, o motor:
  *
@@ -36,6 +38,7 @@ import { DateTime } from "luxon";
 import { Candle, Direction, DojiPolicy, classifyCandle } from "@/lib/core/candle-classifier";
 import { PatternResult, suggestedEntryDirection } from "@/lib/core/pattern-analyzer";
 import { calculateMode1, MartingaleValidationError } from "@/lib/core/martingale-calculator";
+import { localTimeOf } from "@/lib/core/local-time";
 import { analyzeAllSlots, formatTimeOfDay } from "@/lib/analysis/run-analysis";
 
 export interface BacktestRunConfig {
@@ -130,8 +133,8 @@ function enumerateLocalDays(periodStart: Date, periodEnd: Date, timezone: string
 function indexBySymbolDayTime(candles: Candle[], timezone: string): Map<string, Candle> {
   const map = new Map<string, Candle>();
   for (const c of candles) {
-    const local = DateTime.fromJSDate(c.openTime, { zone: "utc" }).setZone(timezone);
-    const key = `${c.symbol}|${local.toISODate()}|${formatTimeOfDay({ hour: local.hour, minute: local.minute })}`;
+    const local = localTimeOf(c, timezone);
+    const key = `${c.symbol}|${local.dateISO}|${formatTimeOfDay({ hour: local.hour, minute: local.minute })}`;
     if (!map.has(key)) map.set(key, c);
   }
   return map;

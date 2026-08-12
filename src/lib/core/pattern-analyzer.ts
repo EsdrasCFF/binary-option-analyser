@@ -12,6 +12,7 @@
 import { Decimal } from "decimal.js";
 import { DateTime } from "luxon";
 import { Candle, Direction, DojiPolicy, classifyCandle } from "./candle-classifier";
+import { localTimeOf } from "./local-time";
 
 export enum PatternStatus {
   STRONG_ACTIVE = "forte_e_ativo",
@@ -111,11 +112,11 @@ export function analyzeTimeSlot(params: AnalyzeTimeSlotParams): PatternResult {
   const byDay = new Map<string, Direction>();
   for (const c of candles) {
     if (c.symbol !== symbol || c.timeframe !== timeframe) continue;
-    const localOpen = DateTime.fromJSDate(c.openTime, { zone: "utc" }).setZone(timezone);
+    const localOpen = localTimeOf(c, timezone);
     if (localOpen.hour !== targetTime.hour || localOpen.minute !== targetTime.minute) continue;
     if (weekdays && !weekdays.has(localOpen.weekday)) continue;
     const direction = classifyCandle(c, dojiTolerancePct);
-    byDay.set(localOpen.toISODate()!, direction);
+    byDay.set(localOpen.dateISO, direction);
   }
 
   const occurrences: DailyOccurrence[] = Array.from(byDay.entries())
