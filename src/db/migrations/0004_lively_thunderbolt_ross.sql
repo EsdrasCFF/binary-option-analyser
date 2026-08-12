@@ -1,0 +1,1 @@
+ALTER TABLE "analysis_configurations" DROP COLUMN "entry_strategy";

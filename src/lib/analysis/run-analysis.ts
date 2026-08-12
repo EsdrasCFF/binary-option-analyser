@@ -38,7 +38,7 @@ export interface AnalysisRunConfig {
   minRepetitionPct: Decimal;
   /** Mínimo de ocorrências válidas para o padrão não ser "amostra_insuficiente". */
   minValidDays: number;
-  /** Mantém apenas os N horários com maior repetitionPct (ranking único, entre todos os pares da análise). */
+  /** Mantém apenas os N horários com maior repetitionPct, aplicado por símbolo (cada par selecionado tem seu próprio Top N). */
   topN?: number;
 }
 

@@ -175,7 +175,6 @@ export const analysisConfigurations = pgTable("analysis_configurations", {
   topN: integer("top_n").notNull().default(10),
   weekdays: jsonb("weekdays"), // array de 1-7 (luxon) ou null = todos
   dataProviderId: uuid("data_provider_id").references(() => dataProviders.id),
-  entryStrategy: entryStrategyEnum("entry_strategy").notNull().default("same_direction"),
   dojiTolerancePct: numeric("doji_tolerance_pct", { precision: 6, scale: 4 }).notNull().default("0"),
   dojiPolicy: dojiPolicyEnum("doji_policy").notNull().default("ignore"),
 });

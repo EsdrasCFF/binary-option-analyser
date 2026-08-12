@@ -285,5 +285,16 @@ export function rankPatterns(
   };
 
   const sorted = [...filtered].sort((a, b) => keyFn[sortBy](b).cmp(keyFn[sortBy](a)));
-  return topN !== undefined ? sorted.slice(0, topN) : sorted;
+  if (topN === undefined) return sorted;
+
+  // topN é aplicado por símbolo (não globalmente): garante que todo par
+  // selecionado na análise apareça no ranking, mesmo que outro par tenha
+  // percentuais de repetição mais altos em geral.
+  const countBySymbol = new Map<string, number>();
+  return sorted.filter((r) => {
+    const count = countBySymbol.get(r.symbol) ?? 0;
+    if (count >= topN) return false;
+    countBySymbol.set(r.symbol, count + 1);
+    return true;
+  });
 }

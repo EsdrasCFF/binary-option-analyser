@@ -44,7 +44,6 @@ const formSchema = z
     minValidDays: z.coerce.number().int().min(1).max(3650),
     topN: z.coerce.number().int().min(1).max(50),
     weekdays: z.array(z.number()),
-    entryStrategy: z.enum(["same_direction", "contrarian"]),
     dojiTolerancePct: z.coerce.number().min(0),
     dojiPolicy: z.enum(["ignore", "count_as_loss", "count_as_tie"]),
   })
@@ -91,7 +90,6 @@ export default function NewAnalysisPage() {
       minValidDays: 20,
       topN: 10,
       weekdays: [],
-      entryStrategy: "same_direction",
       dojiTolerancePct: 0,
       dojiPolicy: "ignore",
     },
@@ -120,7 +118,6 @@ export default function NewAnalysisPage() {
         minValidDays: parsed.minValidDays,
         topN: parsed.topN,
         weekdays: parsed.weekdays.length > 0 ? parsed.weekdays : undefined,
-        entryStrategy: parsed.entryStrategy,
         dojiTolerancePct: String(parsed.dojiTolerancePct),
         dojiPolicy: parsed.dojiPolicy,
       },
@@ -342,61 +339,38 @@ export default function NewAnalysisPage() {
                   </Field>
                 </div>
                 <FieldDescription>
-                  Mantém só os N horários com maior repetição, entre os que passarem do % mínimo.
+                  Mantém só os N horários com maior repetição de cada par selecionado, entre os que
+                  passarem do % mínimo.
                 </FieldDescription>
               </FieldSet>
 
-              <div className="grid grid-cols-2 gap-4">
-                <Field>
-                  <FieldLabel htmlFor="entryStrategy">Estratégia de entrada</FieldLabel>
-                  <Controller
-                    control={control}
-                    name="entryStrategy"
-                    render={({ field }) => (
-                      <Select
-                        items={{ same_direction: "Mesma direção", contrarian: "Contrária" }}
-                        value={field.value}
-                        onValueChange={(v) => v && field.onChange(v)}
-                      >
-                        <SelectTrigger id="entryStrategy" className="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="same_direction">Mesma direção</SelectItem>
-                          <SelectItem value="contrarian">Contrária</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    )}
-                  />
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="dojiPolicy">Política de DOJI</FieldLabel>
-                  <Controller
-                    control={control}
-                    name="dojiPolicy"
-                    render={({ field }) => (
-                      <Select
-                        items={{
-                          ignore: "Ignorar",
-                          count_as_loss: "Contar como derrota",
-                          count_as_tie: "Contar como empate",
-                        }}
-                        value={field.value}
-                        onValueChange={(v) => v && field.onChange(v)}
-                      >
-                        <SelectTrigger id="dojiPolicy" className="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="ignore">Ignorar</SelectItem>
-                          <SelectItem value="count_as_loss">Contar como derrota</SelectItem>
-                          <SelectItem value="count_as_tie">Contar como empate</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    )}
-                  />
-                </Field>
-              </div>
+              <Field>
+                <FieldLabel htmlFor="dojiPolicy">Política de DOJI</FieldLabel>
+                <Controller
+                  control={control}
+                  name="dojiPolicy"
+                  render={({ field }) => (
+                    <Select
+                      items={{
+                        ignore: "Ignorar",
+                        count_as_loss: "Contar como derrota",
+                        count_as_tie: "Contar como empate",
+                      }}
+                      value={field.value}
+                      onValueChange={(v) => v && field.onChange(v)}
+                    >
+                      <SelectTrigger id="dojiPolicy" className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ignore">Ignorar</SelectItem>
+                        <SelectItem value="count_as_loss">Contar como derrota</SelectItem>
+                        <SelectItem value="count_as_tie">Contar como empate</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
+              </Field>
 
               <Field data-invalid={!!errors.dojiTolerancePct}>
                 <FieldLabel htmlFor="dojiTolerancePct">Tolerância de DOJI (%)</FieldLabel>

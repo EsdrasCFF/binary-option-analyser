@@ -12,7 +12,17 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { formatDateTime, formatPercent, formatStatus } from "@/lib/format";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { formatDate, formatDateTime, formatPercent, formatStatus } from "@/lib/format";
+import { Info } from "lucide-react";
+
+const STATUS_LEGEND: Array<{ status: string; criteria: string }> = [
+  { status: "Forte e ativo", criteria: "Repetição geral ≥ 75% e nas últimas 10 ocorrências ≥ 70%." },
+  { status: "Ativo", criteria: "Repetição geral ≥ 65% e nas últimas 10 ocorrências ≥ 55%." },
+  { status: "Perdendo força", criteria: "Repetição recente (10 ocorrências) caiu 15 pontos ou mais frente à geral." },
+  { status: "Inativo", criteria: "Não atende a nenhum dos critérios acima." },
+  { status: "Amostra insuficiente", criteria: "Menos ocorrências válidas do que o \"Dias válidos mín.\" configurado." },
+];
 
 export default function AnalysisDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -90,7 +100,30 @@ export default function AnalysisDetailPage({ params }: { params: Promise<{ id: s
                   <TableHead>Direção</TableHead>
                   <TableHead className="text-right">Repetição</TableHead>
                   <TableHead className="text-right">Dias válidos</TableHead>
-                  <TableHead>Status</TableHead>
+                  <TableHead>
+                    <span className="inline-flex items-center gap-1">
+                      Status
+                      <Popover>
+                        <PopoverTrigger
+                          render={<Button variant="ghost" size="icon-xs" className="-my-1" />}
+                        >
+                          <Info className="size-3.5 text-muted-foreground" />
+                          <span className="sr-only">O que cada status significa</span>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-80">
+                          <p className="mb-2 text-sm font-medium">Como o status é calculado</p>
+                          <dl className="flex flex-col gap-2 text-sm">
+                            {STATUS_LEGEND.map((item) => (
+                              <div key={item.status}>
+                                <dt className="font-medium">{item.status}</dt>
+                                <dd className="text-muted-foreground">{item.criteria}</dd>
+                              </div>
+                            ))}
+                          </dl>
+                        </PopoverContent>
+                      </Popover>
+                    </span>
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -134,7 +167,17 @@ export default function AnalysisDetailPage({ params }: { params: Promise<{ id: s
               </CardHeader>
               <CardContent className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-3">
                 <ConfigItem label="Timeframe" value={configuration.timeframe} />
-                <ConfigItem label="Dias de histórico" value={String(configuration.historicalDays ?? "—")} />
+                {configuration.historicalDays ? (
+                  <ConfigItem
+                    label="Dias de histórico"
+                    value={`${configuration.historicalDays} (a partir de hoje)`}
+                  />
+                ) : (
+                  <ConfigItem
+                    label="Período analisado"
+                    value={`${formatDate(configuration.startDate)} – ${formatDate(configuration.endDate)}`}
+                  />
+                )}
                 <ConfigItem label="Timezone" value={configuration.timezone} />
                 <ConfigItem
                   label="Janela de horário"
@@ -147,10 +190,6 @@ export default function AnalysisDetailPage({ params }: { params: Promise<{ id: s
                 <ConfigItem label="% mínimo" value={formatPercent(configuration.minRepetitionPct)} />
                 <ConfigItem label="Dias válidos mín." value={String(configuration.minValidDays)} />
                 <ConfigItem label="Top N" value={String(configuration.topN)} />
-                <ConfigItem
-                  label="Estratégia"
-                  value={configuration.entryStrategy === "contrarian" ? "Contrária" : "Mesma direção"}
-                />
                 <ConfigItem label="Política de DOJI" value={formatStatus(configuration.dojiPolicy)} />
               </CardContent>
             </Card>

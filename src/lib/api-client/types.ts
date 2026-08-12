@@ -103,7 +103,6 @@ export interface AnalysisConfiguration {
   topN: number;
   weekdays: number[] | null;
   dataProviderId: string | null;
-  entryStrategy: EntryStrategy;
   dojiTolerancePct: string;
   dojiPolicy: DojiPolicy;
 }
@@ -128,7 +127,6 @@ export interface CreateAnalysisInput {
   minValidDays: number;
   topN: number;
   weekdays?: number[];
-  entryStrategy: EntryStrategy;
   dojiTolerancePct: string;
   dojiPolicy: DojiPolicy;
 }

@@ -224,21 +224,22 @@ describe("rankPatterns", () => {
     expect(ranked).toEqual([]);
   });
 
-  it("limita ao topN melhores após ordenar", () => {
-    const results = ["A", "B", "C", "D"].map((symbol, i) => {
-      // A=100%, B=90%, C=80%, D=70% de repetição (10 dias cada)
+  it("limita ao topN melhores após ordenar, dentro de um mesmo símbolo", () => {
+    const symbol = "EURUSD";
+    const results = [12, 13, 14, 15].map((hour, i) => {
+      // hour=12 → 100%, 13 → 90%, 14 → 80%, 15 → 70% de repetição (10 dias cada)
       const callDays = 10 - i;
       const candles = [
-        ...Array.from({ length: callDays }, (_, d) => candle(d, "1.10", "1.11", 12, symbol)),
+        ...Array.from({ length: callDays }, (_, d) => candle(d, "1.10", "1.11", hour, symbol)),
         ...Array.from({ length: 10 - callDays }, (_, i2) =>
-          candle(callDays + i2, "1.11", "1.10", 12, symbol)
+          candle(callDays + i2, "1.11", "1.10", hour, symbol)
         ),
       ];
       return analyzeTimeSlot({
         candles,
         symbol,
         timeframe: "5m",
-        targetTime: { hour: 12, minute: 0 },
+        targetTime: { hour, minute: 0 },
         timezone: "UTC",
         dojiTolerancePct: new Decimal(0),
         dojiPolicy: DojiPolicy.IGNORE,
@@ -247,6 +248,41 @@ describe("rankPatterns", () => {
 
     const ranked = rankPatterns(results, { topN: 2 });
     expect(ranked).toHaveLength(2);
-    expect(ranked.map((r) => r.symbol)).toEqual(["A", "B"]);
+    expect(ranked.map((r) => r.timeOfDay)).toEqual([
+      { hour: 12, minute: 0 },
+      { hour: 13, minute: 0 },
+    ]);
+  });
+
+  it("aplica o topN por símbolo, não globalmente, quando há múltiplos pares", () => {
+    // Símbolo A tem os dois melhores percentuais globais; B tem os dois piores.
+    // topN=2 deve manter os 2 melhores de CADA símbolo, não só os 2 melhores no total.
+    const results = [
+      { symbol: "A", hour: 12, callDays: 10 },
+      { symbol: "A", hour: 13, callDays: 9 },
+      { symbol: "B", hour: 12, callDays: 6 },
+      { symbol: "B", hour: 13, callDays: 5 },
+    ].map(({ symbol, hour, callDays }) => {
+      const candles = [
+        ...Array.from({ length: callDays }, (_, d) => candle(d, "1.10", "1.11", hour, symbol)),
+        ...Array.from({ length: 10 - callDays }, (_, i2) =>
+          candle(callDays + i2, "1.11", "1.10", hour, symbol)
+        ),
+      ];
+      return analyzeTimeSlot({
+        candles,
+        symbol,
+        timeframe: "5m",
+        targetTime: { hour, minute: 0 },
+        timezone: "UTC",
+        dojiTolerancePct: new Decimal(0),
+        dojiPolicy: DojiPolicy.IGNORE,
+      });
+    });
+
+    const ranked = rankPatterns(results, { topN: 2 });
+    expect(ranked).toHaveLength(4);
+    expect(ranked.filter((r) => r.symbol === "A")).toHaveLength(2);
+    expect(ranked.filter((r) => r.symbol === "B")).toHaveLength(2);
   });
 });

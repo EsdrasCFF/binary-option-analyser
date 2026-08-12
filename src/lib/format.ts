@@ -15,9 +15,16 @@ export function formatPercent(value: string | number | null | undefined, decimal
   return `${Number(value).toFixed(decimals)}%`;
 }
 
+/**
+ * Datas "puras" (sem hora) — ex: período de uma análise, escolhidas num
+ * `<input type="date">` — são gravadas como meia-noite UTC representando só
+ * o dia escolhido, sem significado de fuso horário nenhum. Fixamos a leitura
+ * em UTC de propósito: convertendo pro fuso do navegador, meia-noite UTC vira
+ * o dia anterior sempre que o visualizador está a oeste de UTC (ex: Brasil).
+ */
 export function formatDate(value: string | Date | null | undefined): string {
   if (!value) return "—";
-  const dt = typeof value === "string" ? DateTime.fromISO(value) : DateTime.fromJSDate(value);
+  const dt = typeof value === "string" ? DateTime.fromISO(value, { zone: "utc" }) : DateTime.fromJSDate(value, { zone: "utc" });
   return dt.setLocale("pt-BR").toFormat("dd/MM/yyyy");
 }
 

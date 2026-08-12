@@ -17,8 +17,7 @@
  *   "topN": 10,
  *   "weekdays": [1,2,3,4,5],
  *   "dojiTolerancePct": "0.02",
- *   "dojiPolicy": "ignore",
- *   "entryStrategy": "same_direction"
+ *   "dojiPolicy": "ignore"
  * }
  *
  * Nota (Fase 4): o processamento roda dentro do request. Para períodos longos
@@ -60,7 +59,6 @@ const bodySchema = z
     topN: z.number().int().min(1).max(50).default(10),
     weekdays: z.array(z.number().int().min(1).max(7)).min(1).max(7).optional(),
     dataProviderId: uuidString.optional(),
-    entryStrategy: z.enum(["same_direction", "contrarian"]).default("same_direction"),
     dojiTolerancePct: decimalString.default("0"),
     dojiPolicy: z.enum(["ignore", "count_as_loss", "count_as_tie"]).default("ignore"),
   })
@@ -116,7 +114,6 @@ export async function POST(req: NextRequest) {
       topN: body.topN,
       weekdays: body.weekdays ?? null,
       dataProviderId: body.dataProviderId ?? null,
-      entryStrategy: body.entryStrategy,
       dojiTolerancePct: body.dojiTolerancePct,
       dojiPolicy: body.dojiPolicy,
     });
