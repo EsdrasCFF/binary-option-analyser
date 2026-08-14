@@ -16,6 +16,13 @@ export type PatternStatus =
   | "inativo"
   | "amostra_insuficiente";
 
+export interface CurrencyPairTimeframeCoverage {
+  timeframe: string;
+  candleCount: number;
+  firstCandle: string;
+  lastCandle: string;
+}
+
 export interface CurrencyPair {
   id: string;
   symbol: string;
@@ -23,6 +30,7 @@ export interface CurrencyPair {
   quoteCurrency: string;
   createdAt: string;
   candleCount: number;
+  timeframes: CurrencyPairTimeframeCoverage[];
 }
 
 export interface DataProvider {

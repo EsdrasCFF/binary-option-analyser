@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatDateTime } from "@/lib/format";
+import { formatDate, formatDateTime } from "@/lib/format";
 
 export default function DataProvidersPage() {
   const currencyPairs = useCurrencyPairs();
@@ -25,7 +25,10 @@ export default function DataProvidersPage() {
       <Card>
         <CardHeader>
           <CardTitle>Pares de moedas</CardTitle>
-          <CardDescription>Quantidade de candles importados por par.</CardDescription>
+          <CardDescription>
+            Cobertura de candles por par e timeframe — um mesmo par pode ter janelas de dados diferentes por
+            timeframe.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {currencyPairs.isLoading ? (
@@ -37,20 +40,33 @@ export default function DataProvidersPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Par</TableHead>
-                  <TableHead>Moeda base</TableHead>
-                  <TableHead>Moeda cotação</TableHead>
+                  <TableHead>Timeframe</TableHead>
                   <TableHead className="text-right">Candles</TableHead>
+                  <TableHead>Primeiro candle</TableHead>
+                  <TableHead>Último candle</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {currencyPairs.data?.items.map((pair) => (
-                  <TableRow key={pair.id}>
-                    <TableCell className="font-medium">{pair.symbol}</TableCell>
-                    <TableCell>{pair.baseCurrency}</TableCell>
-                    <TableCell>{pair.quoteCurrency}</TableCell>
-                    <TableCell className="text-right">{pair.candleCount.toLocaleString("pt-BR")}</TableCell>
-                  </TableRow>
-                ))}
+                {currencyPairs.data?.items.flatMap((pair) =>
+                  pair.timeframes.length === 0 ? (
+                    <TableRow key={pair.id}>
+                      <TableCell className="font-medium">{pair.symbol}</TableCell>
+                      <TableCell colSpan={4} className="text-muted-foreground">
+                        Nenhum candle importado.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    pair.timeframes.map((tf, i) => (
+                      <TableRow key={`${pair.id}-${tf.timeframe}`}>
+                        <TableCell className="font-medium">{i === 0 ? pair.symbol : ""}</TableCell>
+                        <TableCell>{tf.timeframe}</TableCell>
+                        <TableCell className="text-right">{tf.candleCount.toLocaleString("pt-BR")}</TableCell>
+                        <TableCell>{formatDate(tf.firstCandle)}</TableCell>
+                        <TableCell>{formatDate(tf.lastCandle)}</TableCell>
+                      </TableRow>
+                    ))
+                  )
+                )}
               </TableBody>
             </Table>
           )}
