@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { Decimal } from "decimal.js";
 import { Candle, Direction, DojiPolicy, makeCandle } from "@/lib/core/candle-classifier";
-import { calculateMode1 } from "@/lib/core/martingale-calculator";
+import { calculateAutoRecovery } from "@/lib/core/martingale-calculator";
 import { BacktestRunConfig, runBacktest } from "../run-backtest";
 
 const SYMBOL = "EUR/USD";
@@ -45,8 +45,7 @@ function config(overrides: Partial<BacktestRunConfig> = {}): BacktestRunConfig {
     entryStrategy: "same_direction",
     payoutPct: new Decimal(85),
     initialBankroll: new Decimal(1000),
-    initialEntry: new Decimal(5),
-    minProfit: new Decimal(1),
+    maxExposurePct: new Decimal(20),
     dojiPolicy: DojiPolicy.IGNORE,
     periodStart: new Date("2026-01-01T00:00:00Z"),
     periodEnd: new Date("2026-01-01T23:59:59Z"),
@@ -83,11 +82,10 @@ describe("runBacktest", () => {
     expect(result.operations).toHaveLength(2);
     const [loss, win] = result.operations;
 
-    const schedule = calculateMode1({
+    const schedule = calculateAutoRecovery({
       bankroll: cfg.initialBankroll,
       payoutPct: cfg.payoutPct,
-      initialEntry: cfg.initialEntry,
-      minProfit: cfg.minProfit,
+      maxExposurePct: cfg.maxExposurePct,
       martingaleLevels: 2, // slotCount(3) - 1
     });
 
@@ -154,11 +152,10 @@ describe("runBacktest", () => {
     expect(result.operations.every((o) => o.result === "loss")).toBe(true);
     expect(result.operations.map((o) => o.martingaleLevelReached)).toEqual([0, 1, 2]);
 
-    const schedule = calculateMode1({
+    const schedule = calculateAutoRecovery({
       bankroll: cfg.initialBankroll,
       payoutPct: cfg.payoutPct,
-      initialEntry: cfg.initialEntry,
-      minProfit: cfg.minProfit,
+      maxExposurePct: cfg.maxExposurePct,
       martingaleLevels: 2,
     });
     const last = result.operations[2];
@@ -240,15 +237,22 @@ describe("runBacktest", () => {
     });
     const result = runBacktest([...history, ...live], cfg);
 
-    const schedule = calculateMode1({
+    // o cronograma de cada dia usa a banca ATUAL — dia 2 recalcula em cima da
+    // banca já alterada pelo resultado do dia 1 (mesmo comportamento do motor)
+    const scheduleDay1 = calculateAutoRecovery({
       bankroll: cfg.initialBankroll,
       payoutPct: cfg.payoutPct,
-      initialEntry: cfg.initialEntry,
-      minProfit: cfg.minProfit,
+      maxExposurePct: cfg.maxExposurePct,
       martingaleLevels: 1,
     });
-    const dayWinNet = schedule.levels[1].netProfitAfterRecovery;
-    const dayLossNet = schedule.levels[1].accumulatedExposure;
+    const dayWinNet = scheduleDay1.levels[1].netProfitAfterRecovery;
+    const scheduleDay2 = calculateAutoRecovery({
+      bankroll: cfg.initialBankroll.plus(dayWinNet),
+      payoutPct: cfg.payoutPct,
+      maxExposurePct: cfg.maxExposurePct,
+      martingaleLevels: 1,
+    });
+    const dayLossNet = scheduleDay2.levels[1].accumulatedExposure;
 
     expect(result.operations).toHaveLength(4);
     expect(result.summary.totalOperations).toBe(4); // entradas individuais
@@ -335,9 +339,15 @@ describe("runBacktest", () => {
       const { history, liveDay, cfg } = historyAndConfig();
       const doji = candleAt(liveDay, "07:00", Direction.DOJI);
       const result = runBacktest([...history, doji], { ...cfg, dojiPolicy: DojiPolicy.COUNT_AS_LOSS });
+      const schedule = calculateAutoRecovery({
+        bankroll: cfg.initialBankroll,
+        payoutPct: cfg.payoutPct,
+        maxExposurePct: cfg.maxExposurePct,
+        martingaleLevels: 0, // slotCount: 1
+      });
       expect(result.operations).toHaveLength(1);
       expect(result.operations[0].result).toBe("loss");
-      expect(result.operations[0].profitLoss.toFixed(2)).toBe(cfg.initialEntry.neg().toFixed(2));
+      expect(result.operations[0].profitLoss.toFixed(2)).toBe(schedule.levels[0].entryValue.neg().toFixed(2));
     });
   });
 
@@ -380,7 +390,7 @@ describe("runBacktest", () => {
     }
   });
 
-  it("maxExposureLimit impede abrir a operação quando a escada exigiria mais que o limite", () => {
+  it("maxExposurePct apertado demais impede abrir a operação (nem 1 centavo de lucro mínimo cabe)", () => {
     const history = strongHistory();
     const liveDay = days(1, 21)[0];
     const live = [
@@ -389,16 +399,8 @@ describe("runBacktest", () => {
       candleAt(liveDay, "12:00", Direction.CALL),
     ];
 
-    const schedule = calculateMode1({
-      bankroll: new Decimal(1000),
-      payoutPct: new Decimal(85),
-      initialEntry: new Decimal(5),
-      minProfit: new Decimal(1),
-      martingaleLevels: 2,
-    });
-
     const cfg = config({
-      maxExposureLimit: schedule.totalCapitalRequired.minus(1), // um centavo abaixo do necessário
+      maxExposurePct: new Decimal("0.001"), // 0,001% de 1000 = R$0,01 — não sustenta 3 níveis
       periodStart: new Date(`${liveDay}T00:00:00Z`),
       periodEnd: new Date(`${liveDay}T23:59:59Z`),
     });

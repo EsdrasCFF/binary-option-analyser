@@ -248,11 +248,10 @@ export interface Backtest {
   entryStrategy: EntryStrategy;
   payoutPct: string;
   initialBankroll: string;
-  initialEntry: string;
-  minProfit: string;
+  /** Entrada e lucro mínimo são derivados automaticamente a partir deste percentual (calculateAutoRecovery). */
+  maxExposurePct: string;
   /** Derivado: patternResultIds.length - 1 (não é mais informado pelo usuário). */
   martingaleLevels: number;
-  maxExposureLimit: string | null;
   dailyLossLimit: string | null;
   maxOperationsPerDay: number | null;
   dojiPolicy: DojiPolicy;
@@ -277,9 +276,7 @@ export interface CreateBacktestInput {
   entryStrategy: EntryStrategy;
   payoutPct: string;
   initialBankroll: string;
-  initialEntry: string;
-  minProfit: string;
-  maxExposureLimit?: string;
+  maxExposurePct: string;
   dojiPolicy: DojiPolicy;
   periodStart: string;
   periodEnd: string;
@@ -335,21 +332,9 @@ export interface MartingaleResult {
   maxLevelsSupportedByBankroll: number;
 }
 
-export interface MartingaleMode1Input {
-  mode: "initial_entry";
+export interface MartingaleCalculationInput {
   bankroll: string;
   payoutPct: string;
-  initialEntry: string;
-  minProfit: string;
-  martingaleLevels: number;
-  maxExposurePct?: string;
-}
-
-export interface MartingaleMode2Input {
-  mode: "auto_split";
-  bankroll: string;
-  payoutPct: string;
-  minProfit: string;
   martingaleLevels: number;
   maxExposurePct: string;
 }

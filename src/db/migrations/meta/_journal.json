@@ -43,6 +43,20 @@
       "when": 1786577096588,
       "tag": "0005_empty_vector",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786742684680,
+      "tag": "0006_steady_tombstone",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786742700555,
+      "tag": "0007_icy_speed_demon",
+      "breakpoints": true
     }
   ]
 }

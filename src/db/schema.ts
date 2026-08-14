@@ -239,10 +239,10 @@ export const backtests = pgTable(
     entryStrategy: entryStrategyEnum("entry_strategy").notNull(),
     payoutPct: numeric("payout_pct", { precision: 5, scale: 2 }).notNull(),
     initialBankroll: numeric("initial_bankroll", { precision: 18, scale: 2 }).notNull(),
-    initialEntry: numeric("initial_entry", { precision: 18, scale: 2 }).notNull(),
-    minProfit: numeric("min_profit", { precision: 18, scale: 2 }).notNull(),
+    // entrada e lucro mínimo de recuperação são derivados automaticamente (calculateAutoRecovery)
+    // a partir desse percentual — não são mais informados pelo usuário.
+    maxExposurePct: numeric("max_exposure_pct", { precision: 5, scale: 2 }).notNull(),
     martingaleLevels: integer("martingale_levels").notNull().default(0),
-    maxExposureLimit: numeric("max_exposure_limit", { precision: 18, scale: 2 }),
     dailyLossLimit: numeric("daily_loss_limit", { precision: 18, scale: 2 }),
     maxOperationsPerDay: integer("max_operations_per_day"),
     dojiPolicy: dojiPolicyEnum("doji_policy").notNull().default("ignore"),

@@ -1,0 +1,1 @@
+ALTER TABLE "backtests" ADD COLUMN "max_exposure_pct" numeric(5, 2) NOT NULL;

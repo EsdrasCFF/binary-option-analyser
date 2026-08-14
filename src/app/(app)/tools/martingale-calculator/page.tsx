@@ -8,18 +8,14 @@ import { ApiClientError } from "@/lib/api-client/http";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatCurrency, formatPercent } from "@/lib/format";
 
 export default function MartingaleCalculatorPage() {
-  const [mode, setMode] = useState<"initial_entry" | "auto_split">("initial_entry");
   const [bankroll, setBankroll] = useState("1000");
   const [payoutPct, setPayoutPct] = useState("85");
-  const [initialEntry, setInitialEntry] = useState("5");
-  const [minProfit, setMinProfit] = useState("1");
   const [martingaleLevels, setMartingaleLevels] = useState("2");
   const [maxExposurePct, setMaxExposurePct] = useState("20");
 
@@ -36,35 +32,22 @@ export default function MartingaleCalculatorPage() {
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const input =
-      mode === "initial_entry"
-        ? {
-            mode: "initial_entry" as const,
-            bankroll,
-            payoutPct,
-            initialEntry,
-            minProfit,
-            martingaleLevels: Number(martingaleLevels),
-          }
-        : {
-            mode: "auto_split" as const,
-            bankroll,
-            payoutPct,
-            minProfit,
-            martingaleLevels: Number(martingaleLevels),
-            maxExposurePct,
-          };
-
-    calculate.mutate(input, {
-      onError: (err) => toast.error(err instanceof ApiClientError ? err.message : "Falha ao calcular."),
-    });
+    calculate.mutate(
+      { bankroll, payoutPct, martingaleLevels: Number(martingaleLevels), maxExposurePct },
+      {
+        onError: (err) => toast.error(err instanceof ApiClientError ? err.message : "Falha ao calcular."),
+      }
+    );
   }
 
   return (
     <div className="flex max-w-3xl flex-col gap-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Calculadora de entradas</h1>
-        <p className="text-muted-foreground">Cronograma de Martingale: valores de entrada e recuperação de perdas.</p>
+        <p className="text-muted-foreground">
+          Cronograma de Martingale: o sistema descobre sozinho a entrada e o lucro mínimo de recuperação de cada
+          nível, usando o máximo possível do percentual de exposição informado.
+        </p>
       </div>
 
       <Card>
@@ -92,14 +75,7 @@ export default function MartingaleCalculatorPage() {
           )}
         </CardHeader>
         <CardContent>
-          <Tabs value={mode} onValueChange={(v) => v && setMode(v as typeof mode)}>
-            <TabsList>
-              <TabsTrigger value="initial_entry">Entrada informada</TabsTrigger>
-              <TabsTrigger value="auto_split">Divisão automática</TabsTrigger>
-            </TabsList>
-          </Tabs>
-
-          <form onSubmit={handleSubmit} className="mt-4">
+          <form onSubmit={handleSubmit}>
             <FieldGroup>
               <div className="grid grid-cols-2 gap-4">
                 <Field>
@@ -112,18 +88,7 @@ export default function MartingaleCalculatorPage() {
                 </Field>
               </div>
 
-              {mode === "initial_entry" ? (
-                <Field>
-                  <FieldLabel htmlFor="initialEntry">Entrada inicial</FieldLabel>
-                  <Input
-                    id="initialEntry"
-                    type="number"
-                    step="0.01"
-                    value={initialEntry}
-                    onChange={(e) => setInitialEntry(e.target.value)}
-                  />
-                </Field>
-              ) : (
+              <div className="grid grid-cols-2 gap-4">
                 <Field>
                   <FieldLabel htmlFor="maxExposurePct">Exposição máxima (% da banca)</FieldLabel>
                   <Input
@@ -133,13 +98,6 @@ export default function MartingaleCalculatorPage() {
                     value={maxExposurePct}
                     onChange={(e) => setMaxExposurePct(e.target.value)}
                   />
-                </Field>
-              )}
-
-              <div className="grid grid-cols-2 gap-4">
-                <Field>
-                  <FieldLabel htmlFor="minProfit">Lucro mínimo</FieldLabel>
-                  <Input id="minProfit" type="number" step="0.01" value={minProfit} onChange={(e) => setMinProfit(e.target.value)} />
                 </Field>
                 <Field>
                   <FieldLabel htmlFor="martingaleLevels">Níveis de Martingale</FieldLabel>
@@ -153,6 +111,10 @@ export default function MartingaleCalculatorPage() {
                   />
                 </Field>
               </div>
+              <FieldDescription>
+                Entrada inicial e lucro mínimo de recuperação não são digitados — o sistema calcula o maior lucro
+                mínimo cuja soma de todas as entradas (nível 0 ao último) caiba no percentual de exposição acima.
+              </FieldDescription>
 
               <Button type="submit" disabled={calculate.isPending}>
                 {calculate.isPending ? "Calculando..." : "Calcular"}

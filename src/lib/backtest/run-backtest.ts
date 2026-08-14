@@ -41,7 +41,7 @@ import { Decimal } from "decimal.js";
 import { DateTime } from "luxon";
 import { Candle, Direction, DojiPolicy, classifyCandle } from "@/lib/core/candle-classifier";
 import { PatternResult, suggestedEntryDirection } from "@/lib/core/pattern-analyzer";
-import { calculateMode1, MartingaleValidationError } from "@/lib/core/martingale-calculator";
+import { calculateAutoRecovery, MartingaleValidationError } from "@/lib/core/martingale-calculator";
 import { localTimeOf } from "@/lib/core/local-time";
 import { analyzeAllSlots, formatTimeOfDay } from "@/lib/analysis/run-analysis";
 
@@ -61,9 +61,8 @@ export interface BacktestRunConfig {
   entryStrategy: "same_direction" | "contrarian";
   payoutPct: Decimal;
   initialBankroll: Decimal;
-  initialEntry: Decimal;
-  minProfit: Decimal;
-  maxExposureLimit?: Decimal;
+  /** % máximo da banca ATUAL que a escada do dia pode consumir — entrada e lucro mínimo são derivados automaticamente. */
+  maxExposurePct: Decimal;
   dojiPolicy: DojiPolicy;
   periodStart: Date;
   periodEnd: Date;
@@ -221,23 +220,20 @@ export function runBacktest(candles: Candle[], config: BacktestRunConfig): Backt
 
     if (ladder.length === 0) continue; // nenhum horário elegível hoje: não opera
 
-    // 2) monta o cronograma de Martingale contra a banca ATUAL, com os níveis disponíveis hoje
+    // 2) monta o cronograma de Martingale contra a banca ATUAL, com os níveis disponíveis hoje —
+    // entrada e lucro mínimo são derivados automaticamente, maximizando dentro do maxExposurePct
     const levelsToday = ladder.length - 1;
     let schedule;
     try {
-      schedule = calculateMode1({
+      schedule = calculateAutoRecovery({
         bankroll,
         payoutPct: config.payoutPct,
-        initialEntry: config.initialEntry,
-        minProfit: config.minProfit,
+        maxExposurePct: config.maxExposurePct,
         martingaleLevels: levelsToday,
       });
     } catch (e) {
       if (e instanceof MartingaleValidationError) continue; // banca não suporta a escada de hoje: pula o dia
       throw e;
-    }
-    if (config.maxExposureLimit !== undefined && schedule.totalCapitalRequired.gt(config.maxExposureLimit)) {
-      continue;
     }
 
     // 3) percorre a escada do dia, acumulando uma linha por entrada tentada —

@@ -1,10 +1,10 @@
 import { useMutation } from "@tanstack/react-query";
 import { apiPost } from "./http";
-import { MartingaleMode1Input, MartingaleMode2Input, MartingaleResult } from "./types";
+import { MartingaleCalculationInput, MartingaleResult } from "./types";
 
 export function useCalculateMartingale() {
   return useMutation({
-    mutationFn: (input: MartingaleMode1Input | MartingaleMode2Input) =>
+    mutationFn: (input: MartingaleCalculationInput) =>
       apiPost<MartingaleResult>("/api/martingale-calculations", input),
   });
 }

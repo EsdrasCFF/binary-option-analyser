@@ -17,11 +17,15 @@
  *   "entryStrategy": "contrarian",
  *   "payoutPct": "85",
  *   "initialBankroll": "1000",
- *   "initialEntry": "5.00",
- *   "minProfit": "1.00",
+ *   "maxExposurePct": "20",
  *   "periodStart": "2026-01-01T00:00:00Z",
  *   "periodEnd": "2026-02-01T00:00:00Z"
  * }
+ *
+ * `maxExposurePct` é o único parâmetro de risco: entrada inicial e lucro
+ * mínimo de recuperação são derivados automaticamente (ver
+ * `calculateAutoRecovery` em `src/lib/core/martingale-calculator.ts`), usando
+ * o máximo possível desse percentual da banca em cada dia simulado.
  *
  * Nota (Fase 4): assim como `/api/analyses`, o processamento roda dentro do
  * request. `?process=false` cria o registro sem executar, para a migração à
@@ -51,9 +55,7 @@ const bodySchema = z
     entryStrategy: z.enum(["same_direction", "contrarian"]).default("same_direction"),
     payoutPct: decimalString,
     initialBankroll: decimalString,
-    initialEntry: decimalString,
-    minProfit: decimalString,
-    maxExposureLimit: decimalString.optional(),
+    maxExposurePct: decimalString,
     dojiPolicy: z.enum(["ignore", "count_as_loss", "count_as_tie"]).default("ignore"),
     periodStart: isoDateTimeString,
     periodEnd: isoDateTimeString,
@@ -69,17 +71,10 @@ function assertConsistentParameters(body: z.infer<typeof bodySchema>): void {
     throw new ApiError("payoutPct deve estar entre 0 (exclusivo) e 100.", 422);
   }
   const bankroll = new Decimal(body.initialBankroll);
-  const entry = new Decimal(body.initialEntry);
   if (bankroll.lte(0)) throw new ApiError("initialBankroll deve ser maior que zero.", 422);
-  if (entry.lte(0)) throw new ApiError("initialEntry deve ser maior que zero.", 422);
-  if (entry.gt(bankroll)) {
-    throw new ApiError("initialEntry não pode ser maior que initialBankroll.", 422);
-  }
-  if (new Decimal(body.minProfit).lte(0)) {
-    throw new ApiError("minProfit deve ser maior que zero.", 422);
-  }
-  if (body.maxExposureLimit && new Decimal(body.maxExposureLimit).gt(bankroll)) {
-    throw new ApiError("maxExposureLimit não pode ser maior que initialBankroll.", 422);
+  const maxExposurePct = new Decimal(body.maxExposurePct);
+  if (maxExposurePct.lte(0) || maxExposurePct.gt(100)) {
+    throw new ApiError("maxExposurePct deve estar entre 0 (exclusivo) e 100.", 422);
   }
 }
 
@@ -120,10 +115,8 @@ export async function POST(req: NextRequest) {
         entryStrategy: body.entryStrategy,
         payoutPct: body.payoutPct,
         initialBankroll: body.initialBankroll,
-        initialEntry: body.initialEntry,
-        minProfit: body.minProfit,
+        maxExposurePct: body.maxExposurePct,
         martingaleLevels: uniqueIds.length - 1,
-        maxExposureLimit: body.maxExposureLimit ?? null,
         dojiPolicy: body.dojiPolicy,
         periodStart: new Date(body.periodStart),
         periodEnd: new Date(body.periodEnd),

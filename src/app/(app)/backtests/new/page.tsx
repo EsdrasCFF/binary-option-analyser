@@ -23,16 +23,10 @@ const formSchema = z
     entryStrategy: z.enum(["same_direction", "contrarian"]),
     payoutPct: z.coerce.number().gt(0).lte(100),
     initialBankroll: z.coerce.number().gt(0),
-    initialEntry: z.coerce.number().gt(0),
-    minProfit: z.coerce.number().gt(0),
-    maxExposureLimit: z.coerce.number().optional(),
+    maxExposurePct: z.coerce.number().gt(0).lte(100),
     dojiPolicy: z.enum(["ignore", "count_as_loss", "count_as_tie"]),
     periodStart: z.string().min(1, "Informe a data inicial."),
     periodEnd: z.string().min(1, "Informe a data final."),
-  })
-  .refine((v) => v.initialEntry <= v.initialBankroll, {
-    message: "Entrada inicial não pode ser maior que a banca.",
-    path: ["initialEntry"],
   })
   .refine((v) => new Date(v.periodStart) < new Date(v.periodEnd), {
     message: "Data inicial deve ser anterior à final.",
@@ -76,8 +70,7 @@ export default function NewBacktestPage() {
       entryStrategy: "contrarian",
       payoutPct: 85,
       initialBankroll: 1000,
-      initialEntry: 5,
-      minProfit: 1,
+      maxExposurePct: 20,
       dojiPolicy: "count_as_loss",
       periodStart: "",
       periodEnd: "",
@@ -111,9 +104,7 @@ export default function NewBacktestPage() {
         entryStrategy: parsed.entryStrategy,
         payoutPct: String(parsed.payoutPct),
         initialBankroll: String(parsed.initialBankroll),
-        initialEntry: String(parsed.initialEntry),
-        minProfit: String(parsed.minProfit),
-        maxExposureLimit: parsed.maxExposureLimit ? String(parsed.maxExposureLimit) : undefined,
+        maxExposurePct: String(parsed.maxExposurePct),
         dojiPolicy: parsed.dojiPolicy,
         periodStart: new Date(parsed.periodStart).toISOString(),
         periodEnd: new Date(parsed.periodEnd).toISOString(),
@@ -211,17 +202,15 @@ export default function NewBacktestPage() {
                   <FieldError errors={[errors.initialBankroll]} />
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="initialEntry">Entrada inicial</FieldLabel>
-                  <Input id="initialEntry" type="number" step="0.01" {...register("initialEntry")} />
-                  <FieldError errors={[errors.initialEntry]} />
+                  <FieldLabel htmlFor="maxExposurePct">Exposição máxima (%)</FieldLabel>
+                  <Input id="maxExposurePct" type="number" step="0.1" {...register("maxExposurePct")} />
+                  <FieldError errors={[errors.maxExposurePct]} />
                 </Field>
               </div>
-
-              <Field>
-                <FieldLabel htmlFor="minProfit">Lucro mínimo</FieldLabel>
-                <Input id="minProfit" type="number" step="0.01" {...register("minProfit")} />
-                <FieldError errors={[errors.minProfit]} />
-              </Field>
+              <FieldDescription>
+                Entrada inicial e lucro mínimo de recuperação são derivados automaticamente todo dia, usando o
+                máximo possível desse percentual da banca ATUAL — não são digitados.
+              </FieldDescription>
 
               <div className="grid grid-cols-2 gap-4">
                 <Field>
@@ -274,15 +263,6 @@ export default function NewBacktestPage() {
                   />
                 </Field>
               </div>
-
-              <Field>
-                <FieldLabel htmlFor="maxExposureLimit">Limite de exposição (opcional)</FieldLabel>
-                <Input id="maxExposureLimit" type="number" step="0.01" {...register("maxExposureLimit")} />
-                <FieldDescription>
-                  Se o custo total da escada do dia (todos os níveis) ultrapassar esse valor, o backtest não abre
-                  operação naquele dia.
-                </FieldDescription>
-              </Field>
 
               <Button type="submit" disabled={createBacktest.isPending}>
                 {createBacktest.isPending ? "Simulando..." : "Criar e executar backtest"}
