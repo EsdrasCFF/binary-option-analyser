@@ -79,11 +79,9 @@ describe("runBacktest", () => {
     });
     const result = runBacktest([...history, ...live], cfg);
 
-    expect(result.operations).toHaveLength(1);
-    const [op] = result.operations;
-    expect(op.result).toBe("win");
-    expect(op.martingaleLevelReached).toBe(1);
-    expect(op.timeOfDay).toBe("09:00");
+    // agora uma linha POR ENTRADA tentada: derrota no nível 0, vitória no nível 1
+    expect(result.operations).toHaveLength(2);
+    const [loss, win] = result.operations;
 
     const schedule = calculateMode1({
       bankroll: cfg.initialBankroll,
@@ -92,7 +90,22 @@ describe("runBacktest", () => {
       minProfit: cfg.minProfit,
       martingaleLevels: 2, // slotCount(3) - 1
     });
-    expect(op.profitLoss.toFixed(2)).toBe(schedule.levels[1].netProfitAfterRecovery.toFixed(2));
+
+    expect(loss.result).toBe("loss");
+    expect(loss.martingaleLevelReached).toBe(0);
+    expect(loss.timeOfDay).toBe("07:00");
+    expect(loss.profitLoss.toFixed(2)).toBe(schedule.levels[0].entryValue.neg().toFixed(2));
+    expect(loss.dailyCumulativeProfitLoss.toFixed(2)).toBe(schedule.levels[0].entryValue.neg().toFixed(2));
+
+    expect(win.result).toBe("win");
+    expect(win.martingaleLevelReached).toBe(1);
+    expect(win.timeOfDay).toBe("09:00");
+    expect(win.profitLoss.toFixed(2)).toBe(schedule.levels[1].grossProfitIfWin.toFixed(2));
+    // a soma das duas linhas do dia bate com o antigo resultado único (net-after-recovery)
+    expect(win.bankrollAfter.toFixed(2)).toBe(
+      cfg.initialBankroll.plus(schedule.levels[1].netProfitAfterRecovery).toFixed(2)
+    );
+    expect(win.dailyCumulativeProfitLoss.toFixed(2)).toBe(schedule.levels[1].netProfitAfterRecovery.toFixed(2));
   });
 
   it("a escada é ordenada por horário, não pela força do ranking", () => {
@@ -115,10 +128,10 @@ describe("runBacktest", () => {
     });
     const result = runBacktest([...history, ...live], cfg);
 
-    expect(result.operations).toHaveLength(1);
-    expect(result.operations[0].timeOfDay).toBe("12:00");
-    expect(result.operations[0].martingaleLevelReached).toBe(2);
-    expect(result.operations[0].result).toBe("win");
+    expect(result.operations).toHaveLength(3);
+    expect(result.operations.map((o) => o.timeOfDay)).toEqual(["07:00", "09:00", "12:00"]);
+    expect(result.operations.map((o) => o.martingaleLevelReached)).toEqual([0, 1, 2]);
+    expect(result.operations.map((o) => o.result)).toEqual(["loss", "loss", "win"]);
   });
 
   it("esgota a escada do dia: derrota final com a exposição total", () => {
@@ -136,10 +149,10 @@ describe("runBacktest", () => {
     });
     const result = runBacktest([...history, ...live], cfg);
 
-    expect(result.operations).toHaveLength(1);
-    const [op] = result.operations;
-    expect(op.result).toBe("loss");
-    expect(op.martingaleLevelReached).toBe(2);
+    // esgotar a escada agora vira 3 linhas de derrota (uma por nível), não mais 1 linha agregada
+    expect(result.operations).toHaveLength(3);
+    expect(result.operations.every((o) => o.result === "loss")).toBe(true);
+    expect(result.operations.map((o) => o.martingaleLevelReached)).toEqual([0, 1, 2]);
 
     const schedule = calculateMode1({
       bankroll: cfg.initialBankroll,
@@ -148,7 +161,11 @@ describe("runBacktest", () => {
       minProfit: cfg.minProfit,
       martingaleLevels: 2,
     });
-    expect(op.profitLoss.neg().toFixed(2)).toBe(schedule.levels[2].accumulatedExposure.toFixed(2));
+    const last = result.operations[2];
+    // a soma das 3 derrotas individuais bate com a antiga exposição total acumulada
+    expect(last.bankrollAfter.toFixed(2)).toBe(
+      cfg.initialBankroll.minus(schedule.levels[2].accumulatedExposure).toFixed(2)
+    );
   });
 
   it("usa menos níveis quando nem todos os horários selecionados são elegíveis naquele dia", () => {
@@ -166,9 +183,94 @@ describe("runBacktest", () => {
     });
     const result = runBacktest([...history, ...live], cfg);
 
+    expect(result.operations).toHaveLength(2); // só 2 horários elegíveis: níveis 0 e 1
+    expect(result.operations[0].martingaleLevelReached).toBe(0);
+    expect(result.operations[1].martingaleLevelReached).toBe(1);
+    expect(result.operations[1].timeOfDay).toBe("09:00");
+    expect(result.operations[1].result).toBe("win");
+  });
+
+  it("empate (DOJI count_as_tie) no meio da escada encerra o dia imediatamente, sem tocar os níveis seguintes", () => {
+    const history = strongHistory();
+    const liveDay = days(1, 21)[0];
+    const live = [
+      candleAt(liveDay, "07:00", Direction.DOJI),
+      candleAt(liveDay, "09:00", Direction.CALL), // nunca deveria ser tocado
+      candleAt(liveDay, "12:00", Direction.CALL), // nunca deveria ser tocado
+    ];
+
+    const cfg = config({
+      dojiPolicy: DojiPolicy.COUNT_AS_TIE,
+      periodStart: new Date(`${liveDay}T00:00:00Z`),
+      periodEnd: new Date(`${liveDay}T23:59:59Z`),
+    });
+    const result = runBacktest([...history, ...live], cfg);
+
     expect(result.operations).toHaveLength(1);
-    expect(result.operations[0].martingaleLevelReached).toBe(1); // só 2 horários elegíveis: níveis 0 e 1
-    expect(result.operations[0].timeOfDay).toBe("09:00");
+    expect(result.operations[0].result).toBe("tie");
+    expect(result.operations[0].martingaleLevelReached).toBe(0);
+    expect(result.operations[0].bankrollAfter.toFixed(2)).toBe(cfg.initialBankroll.toFixed(2));
+
+    expect(result.summary.dailyResults).toHaveLength(1);
+    expect(result.summary.dailyResults[0]).toMatchObject({ entries: 1, finalLevel: 0, result: "tie" });
+    expect(result.summary.wins).toBe(0);
+    expect(result.summary.losses).toBe(0);
+    expect(result.summary.ties).toBe(1);
+    expect(result.summary.maxWinStreakDays).toBe(0);
+    expect(result.summary.maxLossStreakDays).toBe(0);
+  });
+
+  it("métricas de dia (profitFactor, byMartingaleLevel, streaks) usam o resultado líquido de cada DIA, não de cada entrada", () => {
+    const history = days(20, 1).flatMap((d) => [
+      candleAt(d, "07:00", Direction.PUT),
+      candleAt(d, "09:00", Direction.PUT),
+    ]);
+    const liveDays = days(2, 21);
+    const live = [
+      candleAt(liveDays[0], "07:00", Direction.CALL), // dia 1, nível 0: perde
+      candleAt(liveDays[0], "09:00", Direction.PUT), // dia 1, nível 1: vence -> dia = WIN
+      candleAt(liveDays[1], "07:00", Direction.CALL), // dia 2, nível 0: perde
+      candleAt(liveDays[1], "09:00", Direction.CALL), // dia 2, nível 1: perde -> dia = LOSS (martingale completo)
+    ];
+
+    const cfg = config({
+      slotCount: 2,
+      periodStart: new Date(`${liveDays[0]}T00:00:00Z`),
+      periodEnd: new Date(`${liveDays[1]}T23:59:59Z`),
+    });
+    const result = runBacktest([...history, ...live], cfg);
+
+    const schedule = calculateMode1({
+      bankroll: cfg.initialBankroll,
+      payoutPct: cfg.payoutPct,
+      initialEntry: cfg.initialEntry,
+      minProfit: cfg.minProfit,
+      martingaleLevels: 1,
+    });
+    const dayWinNet = schedule.levels[1].netProfitAfterRecovery;
+    const dayLossNet = schedule.levels[1].accumulatedExposure;
+
+    expect(result.operations).toHaveLength(4);
+    expect(result.summary.totalOperations).toBe(4); // entradas individuais
+    expect(result.summary.totalDays).toBe(2);
+    expect(result.summary.wins).toBe(1); // dias vencidos, não entradas
+    expect(result.summary.losses).toBe(1);
+
+    expect(result.summary.dailyResults).toHaveLength(2);
+    expect(result.summary.dailyResults[0]).toMatchObject({ entries: 2, finalLevel: 1, result: "win" });
+    expect(result.summary.dailyResults[1]).toMatchObject({ entries: 2, finalLevel: 1, result: "loss" });
+    expect(result.summary.dailyResults[0].profitLoss).toBe(dayWinNet.toFixed(2));
+    expect(result.summary.dailyResults[1].profitLoss).toBe(dayLossNet.neg().toFixed(2));
+
+    // profitFactor calculado sobre o líquido de cada dia, não sobre os buckets brutos por entrada
+    expect(result.summary.profitFactor).toBe(dayWinNet.div(dayLossNet).toFixed(4));
+
+    expect(result.summary.byMartingaleLevel["0"]).toMatchObject({ wins: 0, losses: 2 });
+    expect(result.summary.byMartingaleLevel["1"]).toMatchObject({ wins: 1, losses: 1 });
+
+    expect(result.summary.maxWinStreakDays).toBe(1);
+    expect(result.summary.maxLossStreakDays).toBe(1);
+    expect(result.summary.fullMartingaleLosses).toBe(result.summary.losses);
   });
 
   it("não opera no dia se nenhum horário for elegível ainda", () => {

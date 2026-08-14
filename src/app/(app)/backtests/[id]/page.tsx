@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { formatCurrency, formatDateTime, formatStatus } from "@/lib/format";
+import { formatCurrency, formatDate, formatDateTime, formatStatus } from "@/lib/format";
 import { GroupStats } from "@/lib/api-client/types";
 
 const WEEKDAY_NAMES: Record<string, string> = {
@@ -106,14 +106,111 @@ export default function BacktestDetailPage({ params }: { params: Promise<{ id: s
               <Card>
                 <CardContent className="grid grid-cols-2 gap-6 pt-6 sm:grid-cols-3 lg:grid-cols-6">
                   <StatBox label="Banca final" value={formatCurrency(summary.finalBankroll)} />
-                  <StatBox label="Operações" value={String(summary.totalOperations)} />
-                  <StatBox label="Vitórias" value={String(summary.wins)} />
-                  <StatBox label="Derrotas" value={String(summary.losses)} />
+                  <StatBox label="Entradas" value={String(summary.totalOperations)} />
+                  <StatBox label="Dias com WIN" value={String(summary.wins)} />
+                  <StatBox label="Dias com LOSS" value={String(summary.losses)} />
                   <StatBox label="Drawdown máx." value={formatCurrency(summary.maxDrawdown)} />
                   <StatBox
                     label="Profit factor"
                     value={summary.profitFactor ? Number(summary.profitFactor).toFixed(2) : "—"}
                   />
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Resultado diário</CardTitle>
+                </CardHeader>
+                <CardContent className="grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-5">
+                  <StatBox label="Dias analisados" value={String(summary.totalDays)} />
+                  <StatBox label="% WIN diário" value={`${summary.dailyWinPct}%`} />
+                  <StatBox label="% LOSS diário" value={`${summary.dailyLossPct}%`} />
+                  <StatBox label="Retorno" value={`${summary.returnPct}%`} />
+                  <StatBox label="Martingales completos" value={String(summary.fullMartingaleLosses)} />
+                  <StatBox label="Maior sequência de WIN" value={`${summary.maxWinStreakDays} dia(s)`} />
+                  <StatBox label="Maior sequência de LOSS" value={`${summary.maxLossStreakDays} dia(s)`} />
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Resultado por nível de Martingale</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Nível</TableHead>
+                        <TableHead className="text-right">Entradas</TableHead>
+                        <TableHead className="text-right">Vitórias</TableHead>
+                        <TableHead className="text-right">Derrotas</TableHead>
+                        <TableHead className="text-right">Resultado líquido</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {Object.entries(summary.byMartingaleLevel)
+                        .sort(([a], [b]) => Number(a) - Number(b))
+                        .map(([level, stats]) => (
+                          <TableRow key={level}>
+                            <TableCell>{level}</TableCell>
+                            <TableCell className="text-right">{stats.operations}</TableCell>
+                            <TableCell className="text-right">{stats.wins}</TableCell>
+                            <TableCell className="text-right">{stats.losses}</TableCell>
+                            <TableCell
+                              className={`text-right ${Number(stats.netProfitLoss) < 0 ? "text-destructive" : ""}`}
+                            >
+                              {formatCurrency(stats.netProfitLoss)}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Consolidação diária</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Data</TableHead>
+                        <TableHead className="text-right">Entradas</TableHead>
+                        <TableHead className="text-right">Nível final</TableHead>
+                        <TableHead>Par</TableHead>
+                        <TableHead>Horário</TableHead>
+                        <TableHead>Resultado</TableHead>
+                        <TableHead className="text-right">P&L do dia</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {summary.dailyResults.map((d) => (
+                        <TableRow key={d.date}>
+                          <TableCell className="text-muted-foreground">{formatDate(d.date)}</TableCell>
+                          <TableCell className="text-right">{d.entries}</TableCell>
+                          <TableCell className="text-right">{d.finalLevel}</TableCell>
+                          <TableCell className="font-medium">{d.symbol}</TableCell>
+                          <TableCell>{d.timeOfDay}</TableCell>
+                          <TableCell>
+                            <Badge
+                              variant={
+                                d.result === "win" ? "default" : d.result === "loss" ? "destructive" : "secondary"
+                              }
+                            >
+                              {formatStatus(d.result)}
+                            </Badge>
+                          </TableCell>
+                          <TableCell
+                            className={`text-right font-medium ${Number(d.profitLoss) < 0 ? "text-destructive" : ""}`}
+                          >
+                            {formatCurrency(d.profitLoss)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
                 </CardContent>
               </Card>
 
@@ -164,36 +261,49 @@ export default function BacktestDetailPage({ params }: { params: Promise<{ id: s
                   <TableHead className="text-right">Nível</TableHead>
                   <TableHead>Resultado</TableHead>
                   <TableHead className="text-right">P&L</TableHead>
+                  <TableHead className="text-right">Acum. do dia</TableHead>
+                  <TableHead className="text-right">Acum. geral</TableHead>
                   <TableHead className="text-right">Banca após</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {operations.data?.items.map((op) => (
-                  <TableRow key={op.id}>
-                    <TableCell className="text-muted-foreground">{formatDateTime(op.operationDate)}</TableCell>
-                    <TableCell className="font-medium">{op.symbol}</TableCell>
-                    <TableCell>{op.timeOfDay}</TableCell>
-                    <TableCell>
-                      {op.entryDirection} → {op.actualDirection}
-                    </TableCell>
-                    <TableCell className="text-right">{op.martingaleLevelReached}</TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={
-                          op.result === "win" ? "default" : op.result === "loss" ? "destructive" : "secondary"
-                        }
+                {operations.data?.items.map((op) => {
+                  const overallCumulative = Number(op.bankrollAfter) - Number(b.initialBankroll);
+                  return (
+                    <TableRow key={op.id}>
+                      <TableCell className="text-muted-foreground">{formatDate(op.operationDate)}</TableCell>
+                      <TableCell className="font-medium">{op.symbol}</TableCell>
+                      <TableCell>{op.timeOfDay}</TableCell>
+                      <TableCell>
+                        {op.entryDirection} → {op.actualDirection}
+                      </TableCell>
+                      <TableCell className="text-right">{op.martingaleLevelReached}</TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={
+                            op.result === "win" ? "default" : op.result === "loss" ? "destructive" : "secondary"
+                          }
+                        >
+                          {formatStatus(op.result)}
+                        </Badge>
+                      </TableCell>
+                      <TableCell
+                        className={`text-right font-medium ${Number(op.profitLoss) < 0 ? "text-destructive" : ""}`}
                       >
-                        {formatStatus(op.result)}
-                      </Badge>
-                    </TableCell>
-                    <TableCell
-                      className={`text-right font-medium ${Number(op.profitLoss) < 0 ? "text-destructive" : ""}`}
-                    >
-                      {formatCurrency(op.profitLoss)}
-                    </TableCell>
-                    <TableCell className="text-right">{formatCurrency(op.bankrollAfter)}</TableCell>
-                  </TableRow>
-                ))}
+                        {formatCurrency(op.profitLoss)}
+                      </TableCell>
+                      <TableCell
+                        className={`text-right ${Number(op.dailyCumulativeProfitLoss) < 0 ? "text-destructive" : ""}`}
+                      >
+                        {formatCurrency(op.dailyCumulativeProfitLoss)}
+                      </TableCell>
+                      <TableCell className={`text-right ${overallCumulative < 0 ? "text-destructive" : ""}`}>
+                        {formatCurrency(overallCumulative)}
+                      </TableCell>
+                      <TableCell className="text-right">{formatCurrency(op.bankrollAfter)}</TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           )}

@@ -1,6 +1,8 @@
 /**
  * GET /api/backtests/:id/operations — lista paginada das operações simuladas
- * (uma linha por operação, podendo cobrir vários candles do Martingale).
+ * (uma linha por ENTRADA individual — um dia com Martingale gera várias
+ * linhas com a mesma `operationDate`, uma por `martingaleLevelReached`; ver
+ * `summary.dailyResults` no backtest para a consolidação por dia).
  *
  * Query params: currencyPairId, timeOfDay, result (win|loss|tie),
  * limit (1..500, default 100), offset.
@@ -48,7 +50,7 @@ export async function GET(req: NextRequest, ctx: RouteContext) {
       .from(backtestOperations)
       .innerJoin(currencyPairs, eq(backtestOperations.currencyPairId, currencyPairs.id))
       .where(where)
-      .orderBy(asc(backtestOperations.operationDate))
+      .orderBy(asc(backtestOperations.operationDate), asc(backtestOperations.martingaleLevelReached))
       .limit(q.limit)
       .offset(q.offset);
 

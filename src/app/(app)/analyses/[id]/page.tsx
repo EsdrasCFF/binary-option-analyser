@@ -42,7 +42,7 @@ export default function AnalysisDetailPage({ params }: { params: Promise<{ id: s
 
   function createBacktest() {
     const ids = Array.from(selected);
-    router.push(`/backtests/new?patternResultIds=${ids.join(",")}`);
+    router.push(`/backtests/new?patternResultIds=${ids.join(",")}&analysisId=${id}`);
   }
 
   if (analysis.isLoading) {

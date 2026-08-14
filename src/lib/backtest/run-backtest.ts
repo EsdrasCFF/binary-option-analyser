@@ -1,16 +1,15 @@
 /**
  * Motor de backtest cronológico.
  *
- * Mecânica (definida junto com o usuário — a primeira versão perseguia a
- * perda no candle seguinte do mesmo horário, não era isso que fazia sentido
- * pro caso de uso real): o Martingale NÃO persegue a perda na vela seguinte
- * do mesmo horário — ele
- * percorre os OUTROS horários mais fortes do dia, em ordem crescente de
- * horário. A cada dia simulado, o motor:
+ * Mecânica (definida junto com o usuário): o Martingale NÃO persegue a perda
+ * na vela seguinte do mesmo horário — ele percorre os OUTROS horários mais
+ * fortes do dia, em ordem crescente de horário. A cada dia simulado, o motor:
  *
  *   1. Refaz o ranking do zero (mesma lógica da Analysis, via
  *      `analyzeAllSlots`), usando **só candles anteriores àquele dia**
- *      (rolling window — nunca olha o futuro).
+ *      (rolling window — nunca olha o futuro; a "análise histórica" e o
+ *      "forward test" do usuário são, na prática, este retrain contínuo dia
+ *      a dia, e não uma janela de treino congelada).
  *   2. Filtra pelos mesmos limiares da Analysis original (`minRepetitionPct`,
  *      `minValidDays`) e pega os top N (`slotCount` = quantidade de horários
  *      que o usuário selecionou na tela de ranking).
@@ -21,14 +20,19 @@
  *      até vencer ou esgotar a escada do dia.
  *
  * Consequências importantes desse desenho:
- * - Uma operação = um dia inteiro (no máximo 1 operação por dia), não mais
- *   uma operação por horário selecionado.
+ * - No máximo 1 CICLO de Martingale por dia, mas cada nível tentado dentro
+ *   desse ciclo gera sua PRÓPRIA linha em `operations` (derrota nível 0,
+ *   derrota nível 1, vitória nível 2, ...) — o objetivo diário é 1 vitória;
+ *   assim que uma entrada vence, o dia encerra e os horários restantes da
+ *   escada não são usados.
  * - Os "níveis de Martingale" de cada dia são `slotCount - 1`, MAS podem ser
  *   menores num dia específico se nem todos os N horários passarem no
  *   filtro de amostra/percentual naquele ponto da simulação — o motor usa o
  *   que estiver disponível, nunca inventa horário.
  * - Se faltar o candle de algum horário da escada naquele dia (gap de
- *   dados), o dia inteiro é descartado (não fabrica resultado parcial).
+ *   dados), o dia inteiro é descartado (não fabrica resultado parcial) — as
+ *   linhas de um dia só são gravadas quando ele resolve por completo
+ *   (vitória, empate ou derrota esgotando a escada).
  *
  * Puro: recebe `Candle[]` já carregados e devolve operações + métricas,
  * sem tocar banco — mesma separação usada em `run-analysis.ts`.
@@ -68,14 +72,15 @@ export interface BacktestRunConfig {
 export interface BacktestOperationResult {
   operationDate: string; // yyyy-MM-dd, no timezone do backtest
   symbol: string;
-  timeOfDay: string; // "HH:mm" do horário da escada que resolveu a operação
+  timeOfDay: string; // "HH:mm" do horário desse nível da escada
   entryDirection: Direction;
   actualDirection: Direction;
-  martingaleLevelReached: number;
+  martingaleLevelReached: number; // nível desta entrada específica (0 = primeira do dia)
   entryValue: Decimal;
   result: "win" | "loss" | "tie";
-  profitLoss: Decimal;
-  bankrollAfter: Decimal;
+  profitLoss: Decimal; // resultado financeiro desta entrada isoladamente
+  bankrollAfter: Decimal; // banca corrida (geral) após esta entrada
+  dailyCumulativeProfitLoss: Decimal; // soma corrida do P&L dentro do dia, após esta entrada
 }
 
 export interface GroupStats {
@@ -86,18 +91,42 @@ export interface GroupStats {
   netProfitLoss: string;
 }
 
+export interface DailyResult {
+  date: string; // yyyy-MM-dd
+  entries: number;
+  finalLevel: number;
+  symbol: string;
+  timeOfDay: string;
+  result: "win" | "loss" | "tie";
+  profitLoss: string; // resultado financeiro líquido do dia (soma de todas as entradas)
+}
+
 export interface BacktestSummary {
   finalBankroll: string;
+  /** Total de ENTRADAS individuais (não de dias) — ver `totalDays` para a contagem por dia. */
   totalOperations: number;
+  /** Dias vencidos (não entradas) — a estratégia busca 1 vitória por dia, não maximizar entradas. */
   wins: number;
   losses: number;
   ties: number;
   maxDrawdown: string;
+  /** Calculado sobre o resultado líquido de cada DIA (não sobre entradas isoladas). */
   profitFactor: string | null;
   bySymbol: Record<string, GroupStats>;
   byTimeOfDay: Record<string, GroupStats>;
   byWeekday: Record<string, GroupStats>;
   byMonth: Record<string, GroupStats>;
+  /** Granularidade por ENTRADA (não por dia) — ex: byMartingaleLevel["0"].wins = vitórias no nível 0. */
+  byMartingaleLevel: Record<string, GroupStats>;
+  totalDays: number;
+  dailyWinPct: string;
+  dailyLossPct: string;
+  /** Equivalente a `losses`: neste desenho um dia só perde esgotando a escada por completo. */
+  fullMartingaleLosses: number;
+  maxWinStreakDays: number;
+  maxLossStreakDays: number;
+  returnPct: string;
+  dailyResults: DailyResult[];
 }
 
 export interface BacktestRunResult {
@@ -109,13 +138,18 @@ function emptyGroupStats(): GroupStats {
   return { operations: 0, wins: 0, losses: 0, ties: 0, netProfitLoss: "0.00" };
 }
 
-function addToGroup(map: Record<string, GroupStats>, key: string, op: BacktestOperationResult): void {
+function addToGroup(
+  map: Record<string, GroupStats>,
+  key: string,
+  result: "win" | "loss" | "tie",
+  profitLoss: Decimal
+): void {
   const stats = map[key] ?? emptyGroupStats();
   stats.operations += 1;
-  if (op.result === "win") stats.wins += 1;
-  else if (op.result === "loss") stats.losses += 1;
+  if (result === "win") stats.wins += 1;
+  else if (result === "loss") stats.losses += 1;
   else stats.ties += 1;
-  stats.netProfitLoss = new Decimal(stats.netProfitLoss).plus(op.profitLoss).toFixed(2);
+  stats.netProfitLoss = new Decimal(stats.netProfitLoss).plus(profitLoss).toFixed(2);
   map[key] = stats;
 }
 
@@ -154,10 +188,12 @@ export function runBacktest(candles: Candle[], config: BacktestRunConfig): Backt
   let maxDrawdown = new Decimal(0);
 
   const operations: BacktestOperationResult[] = [];
+  const dailyResults: DailyResult[] = [];
   const bySymbol: Record<string, GroupStats> = {};
   const byTimeOfDay: Record<string, GroupStats> = {};
   const byWeekday: Record<string, GroupStats> = {};
   const byMonth: Record<string, GroupStats> = {};
+  const byMartingaleLevel: Record<string, GroupStats> = {};
 
   for (const day of days) {
     const startOfDayUtc = DateTime.fromISO(day, { zone: config.timezone }).toUTC().toJSDate();
@@ -204,112 +240,139 @@ export function runBacktest(candles: Candle[], config: BacktestRunConfig): Backt
       continue;
     }
 
-    // 3) percorre a escada do dia: nível 0 = horário mais cedo
-    let resolved: BacktestOperationResult | null = null;
+    // 3) percorre a escada do dia, acumulando uma linha por entrada tentada —
+    // só é aplicado (commitado) se o dia resolver por completo (sem gap de
+    // dado, doji indeterminado ou direção indecidível no meio do caminho)
+    const dayOps: BacktestOperationResult[] = [];
+    let dayRunningBankroll = bankroll;
+    let dayCumulative = new Decimal(0);
+    let aborted = false;
+
     for (let level = 0; level < ladder.length; level++) {
       const slot: PatternResult = ladder[level];
       const entryCandle = candleIndex.get(`${slot.symbol}|${day}|${formatTimeOfDay(slot.timeOfDay)}`);
       if (!entryCandle) {
         // falta dado justamente no horário que a escada precisava: não dá pra saber o resultado real
-        resolved = null;
+        aborted = true;
         break;
       }
 
       const entryDirection = suggestedEntryDirection(slot, config.entryStrategy === "contrarian");
       if (entryDirection === null) {
-        resolved = null;
+        aborted = true;
         break;
       }
 
       const levelInfo = schedule.levels[level];
       const actualDirection = classifyCandle(entryCandle, config.dojiTolerancePct);
 
+      let result: "win" | "loss" | "tie" | null = null;
+      let profitLoss = new Decimal(0);
+
       if (actualDirection === Direction.DOJI) {
         if (config.dojiPolicy === DojiPolicy.IGNORE) {
-          resolved = null;
+          aborted = true;
           break;
         }
         if (config.dojiPolicy === DojiPolicy.COUNT_AS_TIE) {
-          resolved = {
-            operationDate: day,
-            symbol: slot.symbol,
-            timeOfDay: formatTimeOfDay(slot.timeOfDay),
-            entryDirection,
-            actualDirection,
-            martingaleLevelReached: level,
-            entryValue: levelInfo.entryValue,
-            result: "tie",
-            profitLoss: new Decimal(0),
-            bankrollAfter: bankroll,
-          };
-          break;
+          result = "tie";
+          profitLoss = new Decimal(0);
         }
-        // COUNT_AS_LOSS: cai no mesmo tratamento de derrota abaixo
+        // COUNT_AS_LOSS: cai no mesmo tratamento de derrota abaixo (result continua null)
       }
 
-      const won = actualDirection === entryDirection;
-      if (won) {
-        const profit = levelInfo.netProfitAfterRecovery;
-        bankroll = bankroll.plus(profit).toDecimalPlaces(2);
-        resolved = {
-          operationDate: day,
-          symbol: slot.symbol,
-          timeOfDay: formatTimeOfDay(slot.timeOfDay),
-          entryDirection,
-          actualDirection,
-          martingaleLevelReached: level,
-          entryValue: levelInfo.entryValue,
-          result: "win",
-          profitLoss: profit,
-          bankrollAfter: bankroll,
-        };
-        break;
+      if (result === null) {
+        const won = actualDirection === entryDirection;
+        result = won ? "win" : "loss";
+        // vitória: só o lucro bruto DESTE nível (derrotas anteriores já são linhas próprias);
+        // derrota: dinheiro realmente perdido é a própria entrada deste nível
+        profitLoss = won ? levelInfo.grossProfitIfWin : levelInfo.entryValue.neg();
       }
 
-      if (level === ladder.length - 1) {
-        // perdeu no último horário da escada de hoje: derrota final do dia
-        const loss = levelInfo.accumulatedExposure;
-        bankroll = bankroll.minus(loss).toDecimalPlaces(2);
-        resolved = {
-          operationDate: day,
-          symbol: slot.symbol,
-          timeOfDay: formatTimeOfDay(slot.timeOfDay),
-          entryDirection,
-          actualDirection,
-          martingaleLevelReached: level,
-          entryValue: levelInfo.entryValue,
-          result: "loss",
-          profitLoss: loss.neg(),
-          bankrollAfter: bankroll,
-        };
-        break;
-      }
-      // perdeu mas ainda há horários na escada de hoje: segue pro próximo nível
+      dayRunningBankroll = dayRunningBankroll.plus(profitLoss).toDecimalPlaces(2);
+      dayCumulative = dayCumulative.plus(profitLoss);
+      dayOps.push({
+        operationDate: day,
+        symbol: slot.symbol,
+        timeOfDay: formatTimeOfDay(slot.timeOfDay),
+        entryDirection,
+        actualDirection,
+        martingaleLevelReached: level,
+        entryValue: levelInfo.entryValue,
+        result,
+        profitLoss,
+        bankrollAfter: dayRunningBankroll,
+        dailyCumulativeProfitLoss: dayCumulative,
+      });
+
+      if (result !== "loss") break; // vitória ou empate encerram o dia; derrota segue pro próximo nível
     }
 
-    if (resolved === null) continue;
+    if (aborted || dayOps.length === 0) continue;
 
-    operations.push(resolved);
-    peakBankroll = Decimal.max(peakBankroll, bankroll);
-    maxDrawdown = Decimal.max(maxDrawdown, peakBankroll.minus(bankroll));
+    // 4) dia resolvido: commita as linhas, atualiza banca e métricas linha a linha
+    for (const op of dayOps) {
+      operations.push(op);
+      bankroll = op.bankrollAfter;
+      peakBankroll = Decimal.max(peakBankroll, bankroll);
+      maxDrawdown = Decimal.max(maxDrawdown, peakBankroll.minus(bankroll));
 
-    addToGroup(bySymbol, resolved.symbol, resolved);
-    addToGroup(byTimeOfDay, resolved.timeOfDay, resolved);
+      addToGroup(byMartingaleLevel, String(op.martingaleLevelReached), op.result, op.profitLoss);
+    }
+
+    const last = dayOps[dayOps.length - 1];
+    dailyResults.push({
+      date: day,
+      entries: dayOps.length,
+      finalLevel: last.martingaleLevelReached,
+      symbol: last.symbol,
+      timeOfDay: last.timeOfDay,
+      result: last.result,
+      profitLoss: last.dailyCumulativeProfitLoss.toFixed(2),
+    });
+
+    const dayProfitLoss = last.dailyCumulativeProfitLoss;
+    addToGroup(bySymbol, last.symbol, last.result, dayProfitLoss);
+    addToGroup(byTimeOfDay, last.timeOfDay, last.result, dayProfitLoss);
     const local = DateTime.fromISO(day, { zone: config.timezone });
-    addToGroup(byWeekday, String(local.weekday), resolved);
-    addToGroup(byMonth, local.toFormat("yyyy-MM"), resolved);
+    addToGroup(byWeekday, String(local.weekday), last.result, dayProfitLoss);
+    addToGroup(byMonth, local.toFormat("yyyy-MM"), last.result, dayProfitLoss);
   }
 
-  const wins = operations.filter((o) => o.result === "win").length;
-  const losses = operations.filter((o) => o.result === "loss").length;
-  const ties = operations.filter((o) => o.result === "tie").length;
+  const wins = dailyResults.filter((d) => d.result === "win").length;
+  const losses = dailyResults.filter((d) => d.result === "loss").length;
+  const ties = dailyResults.filter((d) => d.result === "tie").length;
+  const totalDays = dailyResults.length;
 
-  const grossProfit = operations
-    .filter((o) => o.result === "win")
-    .reduce((acc, o) => acc.plus(o.profitLoss), new Decimal(0));
-  const grossLoss = operations
-    .filter((o) => o.result === "loss")
-    .reduce((acc, o) => acc.plus(o.profitLoss.abs()), new Decimal(0));
+  const grossProfit = dailyResults
+    .filter((d) => d.result === "win")
+    .reduce((acc, d) => acc.plus(d.profitLoss), new Decimal(0));
+  const grossLoss = dailyResults
+    .filter((d) => d.result === "loss")
+    .reduce((acc, d) => acc.plus(new Decimal(d.profitLoss).abs()), new Decimal(0));
+
+  let maxWinStreakDays = 0;
+  let maxLossStreakDays = 0;
+  let winStreak = 0;
+  let lossStreak = 0;
+  for (const d of dailyResults) {
+    if (d.result === "win") {
+      winStreak += 1;
+      lossStreak = 0;
+    } else if (d.result === "loss") {
+      lossStreak += 1;
+      winStreak = 0;
+    } else {
+      winStreak = 0;
+      lossStreak = 0;
+    }
+    maxWinStreakDays = Math.max(maxWinStreakDays, winStreak);
+    maxLossStreakDays = Math.max(maxLossStreakDays, lossStreak);
+  }
+
+  const returnPct = config.initialBankroll.gt(0)
+    ? bankroll.minus(config.initialBankroll).div(config.initialBankroll).mul(100).toFixed(2)
+    : "0.00";
 
   return {
     operations,
@@ -325,6 +388,15 @@ export function runBacktest(candles: Candle[], config: BacktestRunConfig): Backt
       byTimeOfDay,
       byWeekday,
       byMonth,
+      byMartingaleLevel,
+      totalDays,
+      dailyWinPct: totalDays > 0 ? new Decimal(wins).div(totalDays).mul(100).toFixed(2) : "0.00",
+      dailyLossPct: totalDays > 0 ? new Decimal(losses).div(totalDays).mul(100).toFixed(2) : "0.00",
+      fullMartingaleLosses: losses,
+      maxWinStreakDays,
+      maxLossStreakDays,
+      returnPct,
+      dailyResults,
     },
   };
 }

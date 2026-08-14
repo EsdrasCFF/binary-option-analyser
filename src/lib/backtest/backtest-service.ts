@@ -54,6 +54,7 @@ function toOperationRow(
     result: op.result,
     profitLoss: op.profitLoss.toFixed(2),
     bankrollAfter: op.bankrollAfter.toFixed(2),
+    dailyCumulativeProfitLoss: op.dailyCumulativeProfitLoss.toFixed(2),
   };
 }
 

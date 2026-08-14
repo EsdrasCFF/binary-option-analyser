@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useForm, Controller } from "react-hook-form";
@@ -7,6 +8,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
 import { useCreateBacktest } from "@/lib/api-client/backtests";
+import { useAnalysis } from "@/lib/api-client/analyses";
 import { ApiClientError } from "@/lib/api-client/http";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -39,18 +41,35 @@ const formSchema = z
 
 type FormValues = z.input<typeof formSchema>;
 
+/** yyyy-MM-dd no fuso local do navegador, pro `<input type="date">`. */
+function toDateInputValue(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function addDays(date: Date, days: number): Date {
+  const copy = new Date(date);
+  copy.setDate(copy.getDate() + days);
+  return copy;
+}
+
 export default function NewBacktestPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const patternResultIds = (searchParams.get("patternResultIds") ?? "").split(",").filter(Boolean);
+  const analysisId = searchParams.get("analysisId") ?? undefined;
   const martingaleLevels = Math.max(patternResultIds.length - 1, 0);
   const createBacktest = useCreateBacktest();
+  const analysis = useAnalysis(analysisId);
 
   const {
     register,
     control,
     handleSubmit,
-    formState: { errors },
+    setValue,
+    formState: { errors, dirtyFields },
   } = useForm<FormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
@@ -64,6 +83,25 @@ export default function NewBacktestPage() {
       periodEnd: "",
     },
   });
+
+  // Etapa 1 (Análise histórica) → Etapa 2 (Forward test): sugere como período
+  // padrão o dia seguinte ao fim do período analisado até ontem — só um
+  // default, o usuário pode sempre ajustar as datas manualmente.
+  useEffect(() => {
+    const configuration = analysis.data?.configuration;
+    if (!configuration) return;
+
+    const effectiveEnd = configuration.endDate
+      ? new Date(configuration.endDate)
+      : analysis.data?.analysis.createdAt
+        ? new Date(analysis.data.analysis.createdAt)
+        : null;
+    if (!effectiveEnd) return;
+
+    const yesterday = addDays(new Date(), -1);
+    if (!dirtyFields.periodStart) setValue("periodStart", toDateInputValue(addDays(effectiveEnd, 1)));
+    if (!dirtyFields.periodEnd) setValue("periodEnd", toDateInputValue(yesterday));
+  }, [analysis.data, dirtyFields.periodStart, dirtyFields.periodEnd, setValue]);
 
   function onSubmit(values: FormValues) {
     const parsed = formSchema.parse(values);
@@ -131,9 +169,12 @@ export default function NewBacktestPage() {
         <CardHeader>
           <CardTitle>Parâmetros</CardTitle>
           <CardDescription>
-            A cada dia simulado, o motor refaz o ranking usando só dados anteriores àquele dia e pega os{" "}
-            {patternResultIds.length} melhores horários do momento — a entrada começa pelo mais cedo; em caso de
-            derrota, tenta o próximo horário da lista (não o candle seguinte do mesmo horário).
+            Etapa 1 (Análise histórica) já rodou — ela define os {patternResultIds.length} horário(s) e os
+            critérios usados a seguir. Etapa 2 (Forward test): a cada dia simulado do período abaixo, o motor
+            refaz o ranking do zero usando só dados anteriores àquele dia (nunca olha o futuro) e monta a escada
+            do dia com os melhores horários do momento, ordenados do mais cedo ao mais tarde. A entrada começa
+            pelo nível 0; em caso de derrota, tenta o próximo horário da escada (não o candle seguinte do mesmo
+            horário); assim que vencer, o dia encerra — o objetivo é 1 vitória por dia, não maximizar entradas.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -141,16 +182,22 @@ export default function NewBacktestPage() {
             <FieldGroup>
               <div className="grid grid-cols-2 gap-4">
                 <Field>
-                  <FieldLabel htmlFor="periodStart">Início do período</FieldLabel>
+                  <FieldLabel htmlFor="periodStart">Início do forward test</FieldLabel>
                   <Input id="periodStart" type="date" {...register("periodStart")} />
                   <FieldError errors={[errors.periodStart]} />
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="periodEnd">Fim do período</FieldLabel>
+                  <FieldLabel htmlFor="periodEnd">Fim do forward test</FieldLabel>
                   <Input id="periodEnd" type="date" {...register("periodEnd")} />
                   <FieldError errors={[errors.periodEnd]} />
                 </Field>
               </div>
+              {analysisId && (
+                <FieldDescription>
+                  Sugerido a partir do dia seguinte ao fim do período analisado até ontem — ajuste se quiser
+                  testar outro intervalo.
+                </FieldDescription>
+              )}
 
               <div className="grid grid-cols-3 gap-4">
                 <Field>
@@ -178,13 +225,13 @@ export default function NewBacktestPage() {
 
               <div className="grid grid-cols-2 gap-4">
                 <Field>
-                  <FieldLabel htmlFor="entryStrategy">Estratégia de entrada</FieldLabel>
+                  <FieldLabel htmlFor="entryStrategy">Direção da operação</FieldLabel>
                   <Controller
                     control={control}
                     name="entryStrategy"
                     render={({ field }) => (
                       <Select
-                        items={{ same_direction: "Mesma direção", contrarian: "Contrária" }}
+                        items={{ same_direction: "Seguir tendência", contrarian: "Contrário à tendência" }}
                         value={field.value}
                         onValueChange={(v) => v && field.onChange(v)}
                       >
@@ -192,8 +239,8 @@ export default function NewBacktestPage() {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="same_direction">Mesma direção</SelectItem>
-                          <SelectItem value="contrarian">Contrária</SelectItem>
+                          <SelectItem value="same_direction">Seguir tendência</SelectItem>
+                          <SelectItem value="contrarian">Contrário à tendência</SelectItem>
                         </SelectContent>
                       </Select>
                     )}

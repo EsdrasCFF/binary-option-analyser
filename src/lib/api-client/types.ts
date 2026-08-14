@@ -196,18 +196,41 @@ export interface GroupStats {
   netProfitLoss: string;
 }
 
+export interface DailyResult {
+  date: string;
+  entries: number;
+  finalLevel: number;
+  symbol: string;
+  timeOfDay: string;
+  result: "win" | "loss" | "tie";
+  profitLoss: string;
+}
+
 export interface BacktestSummary {
   finalBankroll: string;
+  /** Total de ENTRADAS individuais — ver `totalDays` para a contagem por dia. */
   totalOperations: number;
+  /** Dias vencidos/perdidos/empatados (não entradas) — o objetivo é 1 vitória por dia. */
   wins: number;
   losses: number;
   ties: number;
   maxDrawdown: string;
+  /** Calculado sobre o resultado líquido de cada dia, não sobre entradas isoladas. */
   profitFactor: string | null;
   bySymbol: Record<string, GroupStats>;
   byTimeOfDay: Record<string, GroupStats>;
   byWeekday: Record<string, GroupStats>;
   byMonth: Record<string, GroupStats>;
+  /** Granularidade por ENTRADA — ex: byMartingaleLevel["0"].wins = vitórias no nível 0. */
+  byMartingaleLevel: Record<string, GroupStats>;
+  totalDays: number;
+  dailyWinPct: string;
+  dailyLossPct: string;
+  fullMartingaleLosses: number;
+  maxWinStreakDays: number;
+  maxLossStreakDays: number;
+  returnPct: string;
+  dailyResults: DailyResult[];
 }
 
 export interface Backtest {
@@ -275,6 +298,7 @@ export interface BacktestOperation {
   result: "win" | "loss" | "tie";
   profitLoss: string;
   bankrollAfter: string;
+  dailyCumulativeProfitLoss: string;
   createdAt: string;
   symbol: string;
 }

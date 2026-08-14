@@ -281,6 +281,9 @@ export const backtestOperations = pgTable(
     result: varchar("result", { length: 10 }).notNull(), // "win" | "loss" | "tie"
     profitLoss: numeric("profit_loss", { precision: 18, scale: 2 }).notNull(),
     bankrollAfter: numeric("bankroll_after", { precision: 18, scale: 2 }).notNull(),
+    dailyCumulativeProfitLoss: numeric("daily_cumulative_profit_loss", { precision: 18, scale: 2 })
+      .notNull()
+      .default("0.00"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [

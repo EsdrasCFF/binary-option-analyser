@@ -36,6 +36,13 @@
       "when": 1786564688551,
       "tag": "0004_lively_thunderbolt_ross",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786577096588,
+      "tag": "0005_empty_vector",
+      "breakpoints": true
     }
   ]
 }

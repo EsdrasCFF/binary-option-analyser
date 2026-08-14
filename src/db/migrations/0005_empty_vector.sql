@@ -1,0 +1,1 @@
+ALTER TABLE "backtest_operations" ADD COLUMN "daily_cumulative_profit_loss" numeric(18, 2) DEFAULT '0.00' NOT NULL;
