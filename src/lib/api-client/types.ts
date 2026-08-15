@@ -33,6 +33,34 @@ export interface CurrencyPair {
   timeframes: CurrencyPairTimeframeCoverage[];
 }
 
+export interface Candle {
+  openTime: string;
+  closeTime: string;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume: string | null;
+}
+
+export interface CandlesQuery {
+  currencyPairId: string;
+  timeframe: string;
+  from?: string;
+  to?: string;
+  timeOfDay?: string;
+  timezone?: string;
+  limit?: number;
+}
+
+export interface CandlesResult {
+  items: Candle[];
+  symbol: string;
+  total: number;
+  truncated: boolean;
+  limit: number;
+}
+
 export interface DataProvider {
   id: string;
   userId: string;

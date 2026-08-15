@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   BarChart3,
+  CandlestickChart,
   Calculator,
   Database,
   FileUp,
@@ -47,6 +48,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/import/csv", label: "Importar CSV", icon: FileUp },
       { href: "/import/yahoo", label: "Importar Yahoo Finance", icon: FileUp },
       { href: "/data-providers", label: "Pares e fontes de dados", icon: Database },
+      { href: "/candles", label: "Visualização de velas", icon: CandlestickChart },
     ],
   },
   {

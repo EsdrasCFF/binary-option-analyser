@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPost, apiPostForm } from "./http";
-import { ImportJob, ImportResult, YahooImportResult } from "./types";
+import { CandlesQuery, CandlesResult, ImportJob, ImportResult, YahooImportResult } from "./types";
 
 export function useImportJobs() {
   return useQuery({
@@ -47,5 +47,22 @@ export function useImportYahoo() {
       queryClient.invalidateQueries({ queryKey: ["currency-pairs"] });
       queryClient.invalidateQueries({ queryKey: ["data-providers"] });
     },
+  });
+}
+
+export function useCandles(query: Partial<CandlesQuery>) {
+  const params = new URLSearchParams();
+  if (query.currencyPairId) params.set("currencyPairId", query.currencyPairId);
+  if (query.timeframe) params.set("timeframe", query.timeframe);
+  if (query.from) params.set("from", query.from);
+  if (query.to) params.set("to", query.to);
+  if (query.timeOfDay) params.set("timeOfDay", query.timeOfDay);
+  if (query.timezone) params.set("timezone", query.timezone);
+  if (query.limit) params.set("limit", String(query.limit));
+
+  return useQuery({
+    queryKey: ["candles", query],
+    queryFn: () => apiGet<CandlesResult>(`/api/candles?${params.toString()}`),
+    enabled: !!query.currencyPairId && !!query.timeframe,
   });
 }
