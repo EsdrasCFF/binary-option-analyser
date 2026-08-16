@@ -56,7 +56,8 @@ const bodySchema = z
     timezone: z.string().min(1).max(64).default("UTC"),
     minRepetitionPct: decimalString.default("60"),
     minValidDays: z.number().int().min(1).max(3650).default(20),
-    topN: z.number().int().min(1).max(50).default(10),
+    // omitido/undefined = sem limite (mantém todos os horários que passarem do % mínimo)
+    topN: z.number().int().min(1).max(50).optional(),
     weekdays: z.array(z.number().int().min(1).max(7)).min(1).max(7).optional(),
     dataProviderId: uuidString.optional(),
     dojiTolerancePct: decimalString.default("0"),
@@ -111,7 +112,7 @@ export async function POST(req: NextRequest) {
       timezone: body.timezone,
       minRepetitionPct: body.minRepetitionPct,
       minValidDays: body.minValidDays,
-      topN: body.topN,
+      topN: body.topN ?? null,
       weekdays: body.weekdays ?? null,
       dataProviderId: body.dataProviderId ?? null,
       dojiTolerancePct: body.dojiTolerancePct,

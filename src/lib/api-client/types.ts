@@ -136,7 +136,8 @@ export interface AnalysisConfiguration {
   timezone: string;
   minRepetitionPct: string;
   minValidDays: number;
-  topN: number;
+  /** null = sem limite (todos os horários que passarem do % mínimo). */
+  topN: number | null;
   weekdays: number[] | null;
   dataProviderId: string | null;
   dojiTolerancePct: string;
@@ -161,7 +162,8 @@ export interface CreateAnalysisInput {
   timezone: string;
   minRepetitionPct: string;
   minValidDays: number;
-  topN: number;
+  /** Omitido = sem limite (todos os horários que passarem do % mínimo). */
+  topN?: number;
   weekdays?: number[];
   dojiTolerancePct: string;
   dojiPolicy: DojiPolicy;
@@ -202,11 +204,14 @@ export interface PatternResult {
   analysisName: string;
 }
 
+export type DayPeriod = "madrugada" | "manha" | "tarde" | "noite";
+
 export interface PatternResultsQuery {
   analysisId?: string;
   currencyPairId?: string;
   timeframe?: string;
   timeOfDay?: string;
+  period?: DayPeriod;
   status?: PatternStatus;
   direction?: "CALL" | "PUT";
   minPct?: string;

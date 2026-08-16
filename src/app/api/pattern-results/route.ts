@@ -2,10 +2,16 @@
  * GET /api/pattern-results — lista, filtra e ordena os padrões encontrados.
  *
  * Query params (todos opcionais):
- *   analysisId, currencyPairId, timeframe, timeOfDay ("HH:mm"), status,
+ *   analysisId, currencyPairId, timeframe, timeOfDay ("HH:mm"),
+ *   period=madrugada|manha|tarde|noite, status,
  *   minPct, onlyActive=true, direction=CALL|PUT,
  *   sortBy=repetitionPct|totalValid|recent10Pct|timeOfDay (default repetitionPct),
  *   order=asc|desc (default desc), limit (1..500, default 100), offset
+ *
+ * `period` divide o dia em 4 turnos fixos (madrugada 00:00–05:59, manhã
+ * 06:00–11:59, tarde 12:00–17:59, noite 18:00–23:59) e filtra pelo `timeOfDay`
+ * do padrão — comparação lexicográfica direto na string "HH:mm" (funciona
+ * porque todo valor é zero-padded de 5 caracteres, sem precisar de cast).
  *
  * Os filtros/ordenação reproduzem a semântica de `rankPatterns` do motor
  * (`minPct`, `onlyActive`, `sortBy`), mas executados em SQL: a lista é
@@ -18,7 +24,7 @@
  * informando o analysisId dele.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { SQL, and, asc, count, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { SQL, and, asc, count, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db/client";
 import { analyses, currencyPairs, patternResults } from "@/db/schema";
@@ -27,11 +33,19 @@ import { decimalString, handleErrors, parseSearchParams, uuidString } from "@/li
 
 const ACTIVE_STATUSES = ["forte_e_ativo", "ativo"] as const;
 
+const DAY_PERIODS = {
+  madrugada: { start: "00:00", end: "05:59" },
+  manha: { start: "06:00", end: "11:59" },
+  tarde: { start: "12:00", end: "17:59" },
+  noite: { start: "18:00", end: "23:59" },
+} as const;
+
 const querySchema = z.object({
   analysisId: uuidString.optional(),
   currencyPairId: uuidString.optional(),
   timeframe: z.string().min(1).max(10).optional(),
   timeOfDay: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/).optional(),
+  period: z.enum(["madrugada", "manha", "tarde", "noite"]).optional(),
   status: z
     .enum(["forte_e_ativo", "ativo", "perdendo_forca", "inativo", "amostra_insuficiente"])
     .optional(),
@@ -61,6 +75,10 @@ export async function GET(req: NextRequest) {
     if (q.currencyPairId) conditions.push(eq(patternResults.currencyPairId, q.currencyPairId));
     if (q.timeframe) conditions.push(eq(patternResults.timeframe, q.timeframe));
     if (q.timeOfDay) conditions.push(eq(patternResults.timeOfDay, q.timeOfDay));
+    if (q.period) {
+      const { start, end } = DAY_PERIODS[q.period];
+      conditions.push(gte(patternResults.timeOfDay, start), lte(patternResults.timeOfDay, end));
+    }
     if (q.status) conditions.push(eq(patternResults.status, q.status));
     if (q.direction) conditions.push(eq(patternResults.predominantDirection, q.direction));
     if (q.minPct) conditions.push(gte(patternResults.repetitionPct, q.minPct));

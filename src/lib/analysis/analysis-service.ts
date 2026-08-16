@@ -126,7 +126,7 @@ export async function processAnalysis(analysisId: string): Promise<ProcessAnalys
       dojiPolicy: config.dojiPolicy as DojiPolicy,
       minRepetitionPct: new Decimal(config.minRepetitionPct),
       minValidDays: config.minValidDays,
-      topN: config.topN,
+      topN: config.topN ?? undefined,
     };
 
     const results = runAnalysis(candles, runConfig);

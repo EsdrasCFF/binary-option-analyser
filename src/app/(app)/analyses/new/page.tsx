@@ -42,7 +42,8 @@ const formSchema = z
     timezone: z.string().min(1, "Informe um timezone (ex: America/Sao_Paulo)."),
     minRepetitionPct: z.coerce.number().min(0).max(100),
     minValidDays: z.coerce.number().int().min(1).max(3650),
-    topN: z.coerce.number().int().min(1).max(50),
+    topNMode: z.enum(["limited", "all"]),
+    topN: z.coerce.number().int().min(1).max(50).optional(),
     weekdays: z.array(z.number()),
     dojiTolerancePct: z.coerce.number().min(0),
     dojiPolicy: z.enum(["ignore", "count_as_loss", "count_as_tie"]),
@@ -57,6 +58,9 @@ const formSchema = z
       if (v.startDate && v.endDate && new Date(v.startDate) >= new Date(v.endDate)) {
         ctx.addIssue({ code: "custom", path: ["endDate"], message: "Data final deve ser depois da inicial." });
       }
+    }
+    if (v.topNMode === "limited" && !v.topN) {
+      ctx.addIssue({ code: "custom", path: ["topN"], message: "Informe a quantidade." });
     }
   });
 
@@ -88,6 +92,7 @@ export default function NewAnalysisPage() {
       timezone: "America/Sao_Paulo",
       minRepetitionPct: 60,
       minValidDays: 20,
+      topNMode: "limited",
       topN: 10,
       weekdays: [],
       dojiTolerancePct: 0,
@@ -96,6 +101,7 @@ export default function NewAnalysisPage() {
   });
 
   const periodMode = watch("periodMode");
+  const topNMode = watch("topNMode");
 
   function onSubmit(values: FormValues) {
     const parsed = formSchema.parse(values);
@@ -116,7 +122,7 @@ export default function NewAnalysisPage() {
         timezone: parsed.timezone,
         minRepetitionPct: String(parsed.minRepetitionPct),
         minValidDays: parsed.minValidDays,
-        topN: parsed.topN,
+        topN: parsed.topNMode === "limited" ? parsed.topN : undefined,
         weekdays: parsed.weekdays.length > 0 ? parsed.weekdays : undefined,
         dojiTolerancePct: String(parsed.dojiTolerancePct),
         dojiPolicy: parsed.dojiPolicy,
@@ -334,13 +340,32 @@ export default function NewAnalysisPage() {
                   </Field>
                   <Field data-invalid={!!errors.topN}>
                     <FieldLabel htmlFor="topN">Top N</FieldLabel>
-                    <Input id="topN" type="number" min={1} max={50} {...register("topN")} />
+                    <Controller
+                      control={control}
+                      name="topNMode"
+                      render={({ field }) => (
+                        <Tabs value={field.value} onValueChange={(v) => v && field.onChange(v)} className="mb-1">
+                          <TabsList className="w-full">
+                            <TabsTrigger value="limited" className="flex-1">
+                              Quantidade
+                            </TabsTrigger>
+                            <TabsTrigger value="all" className="flex-1">
+                              Todos
+                            </TabsTrigger>
+                          </TabsList>
+                        </Tabs>
+                      )}
+                    />
+                    {topNMode === "limited" && (
+                      <Input id="topN" type="number" min={1} max={50} {...register("topN")} />
+                    )}
                     <FieldError errors={[errors.topN]} />
                   </Field>
                 </div>
                 <FieldDescription>
-                  Mantém só os N horários com maior repetição de cada par selecionado, entre os que
-                  passarem do % mínimo.
+                  {topNMode === "limited"
+                    ? "Mantém só os N horários com maior repetição de cada par selecionado, entre os que passarem do % mínimo."
+                    : "Mantém todos os horários de cada par selecionado que passarem do % mínimo, sem limite de quantidade."}
                 </FieldDescription>
               </FieldSet>
 

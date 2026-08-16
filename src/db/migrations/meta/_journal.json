@@ -64,6 +64,13 @@
       "when": 1786912902400,
       "tag": "0008_lucky_white_queen",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1786914908220,
+      "tag": "0009_spooky_jack_murdock",
+      "breakpoints": true
     }
   ]
 }

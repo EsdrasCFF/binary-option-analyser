@@ -171,8 +171,9 @@ export const analysisConfigurations = pgTable("analysis_configurations", {
   timezone: varchar("timezone", { length: 64 }).notNull().default("UTC"),
   minRepetitionPct: numeric("min_repetition_pct", { precision: 5, scale: 2 }).notNull(),
   minValidDays: integer("min_valid_days").notNull(),
-  // mantém só os N melhores horários no ranking final (ex: "top 10 horários acima de 70%")
-  topN: integer("top_n").notNull().default(10),
+  // mantém só os N melhores horários no ranking final (ex: "top 10 horários acima de 70%");
+  // null = sem limite, mantém todos os horários que passarem do % mínimo
+  topN: integer("top_n"),
   weekdays: jsonb("weekdays"), // array de 1-7 (luxon) ou null = todos
   dataProviderId: uuid("data_provider_id").references(() => dataProviders.id),
   dojiTolerancePct: numeric("doji_tolerance_pct", { precision: 6, scale: 4 }).notNull().default("0"),

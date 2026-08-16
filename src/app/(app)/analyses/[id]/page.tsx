@@ -13,7 +13,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatDate, formatDateTime, formatPercent, formatStatus } from "@/lib/format";
+import { DayPeriod } from "@/lib/api-client/types";
 import { Info } from "lucide-react";
 
 const STATUS_LEGEND: Array<{ status: string; criteria: string }> = [
@@ -24,11 +26,19 @@ const STATUS_LEGEND: Array<{ status: string; criteria: string }> = [
   { status: "Amostra insuficiente", criteria: "Menos ocorrências válidas do que o \"Dias válidos mín.\" configurado." },
 ];
 
+const DAY_PERIOD_LABELS: Record<DayPeriod, string> = {
+  madrugada: "Madrugada (00:00–05:59)",
+  manha: "Manhã (06:00–11:59)",
+  tarde: "Tarde (12:00–17:59)",
+  noite: "Noite (18:00–23:59)",
+};
+
 export default function AnalysisDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
   const analysis = useAnalysis(id);
-  const patternResults = usePatternResults({ analysisId: id, sortBy: "repetitionPct", order: "desc" });
+  const [period, setPeriod] = useState<DayPeriod | undefined>(undefined);
+  const patternResults = usePatternResults({ analysisId: id, sortBy: "repetitionPct", order: "desc", period });
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   function toggle(patternId: string) {
@@ -77,6 +87,26 @@ export default function AnalysisDetailPage({ params }: { params: Promise<{ id: s
         </TabsList>
 
         <TabsContent value="ranking" className="flex flex-col gap-4">
+          <div className="w-56">
+            <Select
+              items={{ all: "Todos os horários", ...DAY_PERIOD_LABELS }}
+              value={period ?? "all"}
+              onValueChange={(v) => setPeriod(v && v !== "all" ? (v as DayPeriod) : undefined)}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos os horários</SelectItem>
+                {(Object.keys(DAY_PERIOD_LABELS) as DayPeriod[]).map((p) => (
+                  <SelectItem key={p} value={p}>
+                    {DAY_PERIOD_LABELS[p]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
           {selected.size > 0 && (
             <div className="flex items-center justify-between rounded-md border bg-muted/50 p-3">
               <span className="text-sm">{selected.size} padrão(ões) selecionado(s)</span>
@@ -189,7 +219,7 @@ export default function AnalysisDetailPage({ params }: { params: Promise<{ id: s
                 />
                 <ConfigItem label="% mínimo" value={formatPercent(configuration.minRepetitionPct)} />
                 <ConfigItem label="Dias válidos mín." value={String(configuration.minValidDays)} />
-                <ConfigItem label="Top N" value={String(configuration.topN)} />
+                <ConfigItem label="Top N" value={configuration.topN ? String(configuration.topN) : "Todos"} />
                 <ConfigItem label="Política de DOJI" value={formatStatus(configuration.dojiPolicy)} />
               </CardContent>
             </Card>
