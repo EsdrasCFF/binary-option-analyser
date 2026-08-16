@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { RenameBacktestDialog } from "@/components/rename-backtest-dialog";
 import { formatCurrency, formatDate, formatDateTime, formatStatus } from "@/lib/format";
 import { GroupStats } from "@/lib/api-client/types";
 
@@ -82,7 +83,12 @@ export default function BacktestDetailPage({ params }: { params: Promise<{ id: s
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Backtest</h1>
+          <div className="flex items-center gap-1">
+            <h1 className="text-2xl font-semibold tracking-tight">
+              {b.name ?? <span className="text-muted-foreground italic">Backtest sem nome</span>}
+            </h1>
+            <RenameBacktestDialog backtestId={b.id} currentName={b.name} />
+          </div>
           <p className="text-muted-foreground">Criado em {formatDateTime(b.createdAt)}</p>
         </div>
         <Badge variant={b.status === "error" ? "destructive" : "secondary"}>{formatStatus(b.status)}</Badge>

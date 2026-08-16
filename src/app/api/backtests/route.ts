@@ -51,6 +51,7 @@ import { processBacktest } from "@/lib/backtest/backtest-service";
 
 const bodySchema = z
   .object({
+    name: z.string().trim().min(1).max(60).optional(),
     patternResultIds: z.array(uuidString).min(1).max(MAX_MARTINGALE_LEVELS + 1),
     entryStrategy: z.enum(["same_direction", "contrarian"]).default("same_direction"),
     payoutPct: decimalString,
@@ -111,6 +112,7 @@ export async function POST(req: NextRequest) {
       .insert(backtests)
       .values({
         userId,
+        name: body.name ?? null,
         patternResultIds: uniqueIds,
         entryStrategy: body.entryStrategy,
         payoutPct: body.payoutPct,

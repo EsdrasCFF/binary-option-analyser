@@ -1,0 +1,1 @@
+ALTER TABLE "backtests" ADD COLUMN "name" varchar(60);

@@ -235,6 +235,8 @@ export const backtests = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    // opcional: não é pedido na criação, o usuário pode nomear depois pela tela
+    name: varchar("name", { length: 60 }),
     patternResultIds: jsonb("pattern_result_ids").notNull(), // padrões selecionados
     entryStrategy: entryStrategyEnum("entry_strategy").notNull(),
     payoutPct: numeric("payout_pct", { precision: 5, scale: 2 }).notNull(),

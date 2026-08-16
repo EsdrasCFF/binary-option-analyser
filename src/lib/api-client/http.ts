@@ -45,6 +45,10 @@ export function apiDelete<T = void>(path: string): Promise<T> {
   return request<T>(path, { method: "DELETE" });
 }
 
+export function apiPatch<T>(path: string, body: unknown): Promise<T> {
+  return request<T>(path, { method: "PATCH", body: JSON.stringify(body) });
+}
+
 /** POST multipart/form-data — usado só pela importação de CSV. */
 export async function apiPostForm<T>(path: string, form: FormData): Promise<T> {
   const res = await fetch(path, { method: "POST", body: form });

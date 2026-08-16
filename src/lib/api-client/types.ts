@@ -272,6 +272,8 @@ export interface BacktestSummary {
 export interface Backtest {
   id: string;
   userId: string;
+  /** Opcional — não é pedido na criação, pode ser definido/editado depois pela tela. */
+  name: string | null;
   patternResultIds: string[];
   entryStrategy: EntryStrategy;
   payoutPct: string;
@@ -299,6 +301,7 @@ export interface Backtest {
 }
 
 export interface CreateBacktestInput {
+  name?: string;
   /** Todos precisam vir da mesma análise; a quantidade define os níveis de Martingale. */
   patternResultIds: string[];
   entryStrategy: EntryStrategy;

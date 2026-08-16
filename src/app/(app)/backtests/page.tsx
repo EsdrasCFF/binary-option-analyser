@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { RenameBacktestDialog } from "@/components/rename-backtest-dialog";
 import { formatCurrency, formatDateTime, formatStatus } from "@/lib/format";
 import { Trash2 } from "lucide-react";
 
@@ -43,6 +44,7 @@ export default function BacktestsPage() {
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead>Nome</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Operações</TableHead>
               <TableHead className="text-right">Banca final</TableHead>
@@ -55,6 +57,14 @@ export default function BacktestsPage() {
           <TableBody>
             {backtests.data?.items.map((b) => (
               <TableRow key={b.id}>
+                <TableCell>
+                  <div className="flex items-center gap-1">
+                    <Link href={`/backtests/${b.id}`} className="font-medium underline-offset-4 hover:underline">
+                      {b.name ?? <span className="text-muted-foreground italic">Sem nome</span>}
+                    </Link>
+                    <RenameBacktestDialog backtestId={b.id} currentName={b.name} />
+                  </div>
+                </TableCell>
                 <TableCell>
                   <Link href={`/backtests/${b.id}`} className="underline-offset-4 hover:underline">
                     <Badge variant={b.status === "error" ? "destructive" : "secondary"}>
