@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiGet, apiPost } from "./http";
+import { apiDelete, apiGet, apiPost } from "./http";
 import { Backtest, BacktestOperation, CreateBacktestInput, CreateBacktestResult, PaginatedResult } from "./types";
 
 export function useBacktests() {
@@ -38,6 +38,16 @@ export function useCreateBacktest() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: CreateBacktestInput) => apiPost<CreateBacktestResult>("/api/backtests", input),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["backtests"] });
+    },
+  });
+}
+
+export function useDeleteBacktest() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiDelete(`/api/backtests/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["backtests"] });
     },

@@ -1,15 +1,27 @@
 "use client";
 
 import Link from "next/link";
-import { useBacktests } from "@/lib/api-client/backtests";
+import { toast } from "sonner";
+import { useBacktests, useDeleteBacktest } from "@/lib/api-client/backtests";
+import { ApiClientError } from "@/lib/api-client/http";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatCurrency, formatDateTime, formatStatus } from "@/lib/format";
+import { Trash2 } from "lucide-react";
 
 export default function BacktestsPage() {
   const backtests = useBacktests();
+  const deleteBacktest = useDeleteBacktest();
+
+  function handleDelete(id: string) {
+    if (!confirm("Remover este backtest? As operações simuladas também serão removidas.")) return;
+    deleteBacktest.mutate(id, {
+      onSuccess: () => toast.success("Backtest removido."),
+      onError: (err) => toast.error(err instanceof ApiClientError ? err.message : "Falha ao remover."),
+    });
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -37,6 +49,7 @@ export default function BacktestsPage() {
               <TableHead className="text-right">Drawdown máx.</TableHead>
               <TableHead className="text-right">Profit factor</TableHead>
               <TableHead>Criado em</TableHead>
+              <TableHead className="w-10" />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -54,6 +67,16 @@ export default function BacktestsPage() {
                 <TableCell className="text-right">{formatCurrency(b.maxDrawdown)}</TableCell>
                 <TableCell className="text-right">{b.profitFactor ? Number(b.profitFactor).toFixed(2) : "—"}</TableCell>
                 <TableCell className="text-muted-foreground">{formatDateTime(b.createdAt)}</TableCell>
+                <TableCell>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => handleDelete(b.id)}
+                    aria-label="Remover backtest"
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
