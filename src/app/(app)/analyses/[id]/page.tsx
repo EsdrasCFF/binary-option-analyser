@@ -15,8 +15,53 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatDate, formatDateTime, formatPercent, formatStatus } from "@/lib/format";
-import { DayPeriod } from "@/lib/api-client/types";
-import { Info } from "lucide-react";
+import { DayPeriod, PatternResultsQuery } from "@/lib/api-client/types";
+import { ArrowDown, ArrowUp, ArrowUpDown, Info } from "lucide-react";
+
+type SortBy = NonNullable<PatternResultsQuery["sortBy"]>;
+
+const DEFAULT_SORT_ORDER: Record<SortBy, "asc" | "desc"> = {
+  repetitionPct: "desc",
+  totalValid: "desc",
+  recent10Pct: "desc",
+  timeOfDay: "asc",
+  direction: "asc",
+};
+
+function SortableHeader({
+  label,
+  active,
+  order,
+  onClick,
+  className,
+}: {
+  label: string;
+  active: boolean;
+  order: "asc" | "desc";
+  onClick: () => void;
+  className?: string;
+}) {
+  return (
+    <TableHead className={className}>
+      <button
+        type="button"
+        onClick={onClick}
+        className="inline-flex items-center gap-1 hover:text-foreground"
+      >
+        {label}
+        {active ? (
+          order === "asc" ? (
+            <ArrowUp className="size-3.5" />
+          ) : (
+            <ArrowDown className="size-3.5" />
+          )
+        ) : (
+          <ArrowUpDown className="size-3.5 text-muted-foreground/50" />
+        )}
+      </button>
+    </TableHead>
+  );
+}
 
 const STATUS_LEGEND: Array<{ status: string; criteria: string }> = [
   { status: "Forte e ativo", criteria: "Repetição geral ≥ 75% e nas últimas 10 ocorrências ≥ 70%." },
@@ -38,8 +83,19 @@ export default function AnalysisDetailPage({ params }: { params: Promise<{ id: s
   const router = useRouter();
   const analysis = useAnalysis(id);
   const [period, setPeriod] = useState<DayPeriod | undefined>(undefined);
-  const patternResults = usePatternResults({ analysisId: id, sortBy: "repetitionPct", order: "desc", period });
+  const [sortBy, setSortBy] = useState<SortBy>("repetitionPct");
+  const [order, setOrder] = useState<"asc" | "desc">("desc");
+  const patternResults = usePatternResults({ analysisId: id, sortBy, order, period });
   const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  function handleSort(column: SortBy) {
+    if (sortBy === column) {
+      setOrder((o) => (o === "asc" ? "desc" : "asc"));
+    } else {
+      setSortBy(column);
+      setOrder(DEFAULT_SORT_ORDER[column]);
+    }
+  }
 
   function toggle(patternId: string) {
     setSelected((prev) => {
@@ -126,10 +182,32 @@ export default function AnalysisDetailPage({ params }: { params: Promise<{ id: s
                 <TableRow>
                   <TableHead className="w-10" />
                   <TableHead>Par</TableHead>
-                  <TableHead>Horário</TableHead>
-                  <TableHead>Direção</TableHead>
-                  <TableHead className="text-right">Repetição</TableHead>
-                  <TableHead className="text-right">Dias válidos</TableHead>
+                  <SortableHeader
+                    label="Horário"
+                    active={sortBy === "timeOfDay"}
+                    order={order}
+                    onClick={() => handleSort("timeOfDay")}
+                  />
+                  <SortableHeader
+                    label="Direção"
+                    active={sortBy === "direction"}
+                    order={order}
+                    onClick={() => handleSort("direction")}
+                  />
+                  <SortableHeader
+                    label="Repetição"
+                    active={sortBy === "repetitionPct"}
+                    order={order}
+                    onClick={() => handleSort("repetitionPct")}
+                    className="text-right"
+                  />
+                  <SortableHeader
+                    label="Dias válidos"
+                    active={sortBy === "totalValid"}
+                    order={order}
+                    onClick={() => handleSort("totalValid")}
+                    className="text-right"
+                  />
                   <TableHead>
                     <span className="inline-flex items-center gap-1">
                       Status

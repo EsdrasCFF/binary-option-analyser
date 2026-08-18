@@ -5,7 +5,7 @@
  *   analysisId, currencyPairId, timeframe, timeOfDay ("HH:mm"),
  *   period=madrugada|manha|tarde|noite, status,
  *   minPct, onlyActive=true, direction=CALL|PUT,
- *   sortBy=repetitionPct|totalValid|recent10Pct|timeOfDay (default repetitionPct),
+ *   sortBy=repetitionPct|totalValid|recent10Pct|timeOfDay|direction (default repetitionPct),
  *   order=asc|desc (default desc), limit (1..500, default 100), offset
  *
  * `period` divide o dia em 4 turnos fixos (madrugada 00:00–05:59, manhã
@@ -52,7 +52,9 @@ const querySchema = z.object({
   direction: z.enum(["CALL", "PUT"]).optional(),
   minPct: decimalString.optional(),
   onlyActive: z.enum(["true", "false"]).optional(),
-  sortBy: z.enum(["repetitionPct", "totalValid", "recent10Pct", "timeOfDay"]).default("repetitionPct"),
+  sortBy: z
+    .enum(["repetitionPct", "totalValid", "recent10Pct", "timeOfDay", "direction"])
+    .default("repetitionPct"),
   order: z.enum(["asc", "desc"]).default("desc"),
   limit: z.coerce.number().int().min(1).max(500).default(100),
   offset: z.coerce.number().int().min(0).default(0),
@@ -63,7 +65,11 @@ const SORT_COLUMNS = {
   totalValid: patternResults.totalValid,
   recent10Pct: patternResults.recent10Pct,
   timeOfDay: patternResults.timeOfDay,
+  direction: patternResults.predominantDirection,
 } as const;
+
+/** Colunas que podem ser nulas (amostra insuficiente/doji) — sempre por último, nunca no topo do ranking. */
+const NULLS_LAST_COLUMNS = new Set<keyof typeof SORT_COLUMNS>(["recent10Pct", "direction"]);
 
 export async function GET(req: NextRequest) {
   return handleErrors(async () => {
@@ -88,14 +94,14 @@ export async function GET(req: NextRequest) {
     const where = and(...conditions);
 
     // NULLS LAST em ambas as direções: padrões sem histórico recente suficiente
-    // (recent10Pct nulo) nunca devem aparecer no topo do ranking.
+    // (recent10Pct nulo) ou sem direção predominante (amostra insuficiente/doji)
+    // nunca devem aparecer no topo do ranking.
     const sortColumn = SORT_COLUMNS[q.sortBy];
-    const orderBy =
-      q.sortBy === "recent10Pct"
-        ? sql`${sortColumn} ${sql.raw(q.order)} NULLS LAST`
-        : q.order === "asc"
-          ? asc(sortColumn)
-          : desc(sortColumn);
+    const orderBy = NULLS_LAST_COLUMNS.has(q.sortBy)
+      ? sql`${sortColumn} ${sql.raw(q.order)} NULLS LAST`
+      : q.order === "asc"
+        ? asc(sortColumn)
+        : desc(sortColumn);
 
     const items = await db
       .select({

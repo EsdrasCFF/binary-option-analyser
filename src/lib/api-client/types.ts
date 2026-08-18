@@ -216,7 +216,7 @@ export interface PatternResultsQuery {
   direction?: "CALL" | "PUT";
   minPct?: string;
   onlyActive?: boolean;
-  sortBy?: "repetitionPct" | "totalValid" | "recent10Pct" | "timeOfDay";
+  sortBy?: "repetitionPct" | "totalValid" | "recent10Pct" | "timeOfDay" | "direction";
   order?: "asc" | "desc";
   limit?: number;
   offset?: number;
