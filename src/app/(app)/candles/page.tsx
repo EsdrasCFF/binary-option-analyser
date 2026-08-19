@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertTriangle } from "lucide-react";
-import { formatDate } from "@/lib/format";
+import { formatTimestampDate } from "@/lib/format";
 
 /** yyyy-MM-dd no fuso local do navegador, pro `<input type="date">`. */
 function toDateInputValue(date: Date): string {
@@ -161,25 +161,23 @@ export default function CandlesPage() {
                   onChange={(e) => setTimeOfDay(e.target.value)}
                 />
               </Field>
-              {timeOfDay && (
-                <Field>
-                  <FieldLabel htmlFor="timezone">Timezone</FieldLabel>
-                  <Input
-                    id="timezone"
-                    type="text"
-                    placeholder="America/Sao_Paulo"
-                    value={timezone}
-                    onChange={(e) => setTimezone(e.target.value)}
-                  />
-                </Field>
-              )}
+              <Field>
+                <FieldLabel htmlFor="timezone">Timezone</FieldLabel>
+                <Input
+                  id="timezone"
+                  type="text"
+                  placeholder="America/Sao_Paulo"
+                  value={timezone}
+                  onChange={(e) => setTimezone(e.target.value)}
+                />
+              </Field>
             </div>
           )}
 
           {selectedCoverage && (
             <p className="mt-3 text-sm text-muted-foreground">
               Dados disponíveis para {selectedPair?.symbol} {selectedCoverage.timeframe}:{" "}
-              {formatDate(selectedCoverage.firstCandle)} – {formatDate(selectedCoverage.lastCandle)}.
+              {formatTimestampDate(selectedCoverage.firstCandle)} – {formatTimestampDate(selectedCoverage.lastCandle)}.
             </p>
           )}
         </CardContent>
@@ -189,8 +187,8 @@ export default function CandlesPage() {
         <Card>
           <CardHeader>
             <CardTitle>
-              {selectedPair?.symbol} · {timeframe}
-              {timeOfDay && ` · ${timeOfDay} (${timezone})`}
+              {selectedPair?.symbol} · {timeframe} · {timezone}
+              {timeOfDay && ` · ${timeOfDay}`}
             </CardTitle>
             {candles.data && (
               <CardDescription>
@@ -218,7 +216,7 @@ export default function CandlesPage() {
                     </AlertDescription>
                   </Alert>
                 )}
-                <CandlestickChart candles={candles.data.items} />
+                <CandlestickChart candles={candles.data.items} timezone={timezone} />
               </>
             )}
           </CardContent>

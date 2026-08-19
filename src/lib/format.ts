@@ -34,6 +34,28 @@ export function formatDateTime(value: string | Date | null | undefined): string 
   return dt.setLocale("pt-BR").toFormat("dd/MM/yyyy HH:mm");
 }
 
+/**
+ * Só a data (sem hora) de um timestamp REAL (ex: primeiro/último candle
+ * importado) — converte pro fuso do navegador antes de extrair o dia, ao
+ * contrário de `formatDate` (que assume o valor já É uma data pura em UTC,
+ * sem hora, e por isso NUNCA converte). Usar aqui o `formatDate` pinado em
+ * UTC erraria o dia sempre que o instante cair a menos de |offset| horas da
+ * meia-noite UTC (ex: candle às 2026-06-08T01:20Z é 07/06 à noite em
+ * America/Sao_Paulo, não 08/06).
+ */
+export function formatTimestampDate(value: string | Date | null | undefined): string {
+  if (!value) return "—";
+  const dt = typeof value === "string" ? DateTime.fromISO(value) : DateTime.fromJSDate(value);
+  return dt.setLocale("pt-BR").toFormat("dd/MM/yyyy");
+}
+
+/** Como `formatDateTime`, mas convertendo pra um fuso explícito em vez do fuso do navegador — usado onde a tela já tem um timezone de referência escolhido (ex: visualização de velas), pra não depender do fuso do dispositivo de quem está olhando. */
+export function formatDateTimeInZone(value: string | Date | null | undefined, zone: string): string {
+  if (!value) return "—";
+  const dt = typeof value === "string" ? DateTime.fromISO(value) : DateTime.fromJSDate(value);
+  return dt.setZone(zone).setLocale("pt-BR").toFormat("dd/MM/yyyy HH:mm");
+}
+
 const STATUS_LABELS: Record<string, string> = {
   pending: "Pendente",
   processing: "Processando",

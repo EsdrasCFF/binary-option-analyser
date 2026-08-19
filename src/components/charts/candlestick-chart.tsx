@@ -2,7 +2,7 @@
 
 import { Bar, CartesianGrid, ComposedChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Candle } from "@/lib/api-client/types";
-import { formatDateTime } from "@/lib/format";
+import { formatDateTimeInZone } from "@/lib/format";
 
 const UP_COLOR = "#16a34a";
 const DOWN_COLOR = "#dc2626";
@@ -17,13 +17,21 @@ interface CandlePoint {
   range: [number, number];
 }
 
-function toPoints(candles: Candle[]): CandlePoint[] {
+function toPoints(candles: Candle[], timezone: string): CandlePoint[] {
   return candles.map((c) => {
     const open = Number(c.open);
     const high = Number(c.high);
     const low = Number(c.low);
     const close = Number(c.close);
-    return { openTime: c.openTime, label: formatDateTime(c.openTime), open, high, low, close, range: [low, high] };
+    return {
+      openTime: c.openTime,
+      label: formatDateTimeInZone(c.openTime, timezone),
+      open,
+      high,
+      low,
+      close,
+      range: [low, high],
+    };
   });
 }
 
@@ -69,7 +77,7 @@ function CandleTooltip({ active, payload }: { active?: boolean; payload?: Array<
   const p = payload[0].payload;
   return (
     <div className="rounded-md border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md">
-      <p className="mb-1 font-medium">{formatDateTime(p.openTime)}</p>
+      <p className="mb-1 font-medium">{p.label}</p>
       <p>Abertura: {p.open.toFixed(5)}</p>
       <p>Máxima: {p.high.toFixed(5)}</p>
       <p>Mínima: {p.low.toFixed(5)}</p>
@@ -78,8 +86,8 @@ function CandleTooltip({ active, payload }: { active?: boolean; payload?: Array<
   );
 }
 
-export function CandlestickChart({ candles }: { candles: Candle[] }) {
-  const data = toPoints(candles);
+export function CandlestickChart({ candles, timezone }: { candles: Candle[]; timezone: string }) {
+  const data = toPoints(candles, timezone);
   const lows = data.map((d) => d.low);
   const highs = data.map((d) => d.high);
   const min = Math.min(...lows);

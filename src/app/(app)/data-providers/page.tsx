@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatDate, formatDateTime } from "@/lib/format";
+import { formatDateTime, formatTimestampDate } from "@/lib/format";
 
 export default function DataProvidersPage() {
   const currencyPairs = useCurrencyPairs();
@@ -61,8 +61,8 @@ export default function DataProvidersPage() {
                         <TableCell className="font-medium">{i === 0 ? pair.symbol : ""}</TableCell>
                         <TableCell>{tf.timeframe}</TableCell>
                         <TableCell className="text-right">{tf.candleCount.toLocaleString("pt-BR")}</TableCell>
-                        <TableCell>{formatDate(tf.firstCandle)}</TableCell>
-                        <TableCell>{formatDate(tf.lastCandle)}</TableCell>
+                        <TableCell>{formatTimestampDate(tf.firstCandle)}</TableCell>
+                        <TableCell>{formatTimestampDate(tf.lastCandle)}</TableCell>
                       </TableRow>
                     ))
                   )
