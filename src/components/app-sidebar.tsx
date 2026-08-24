@@ -6,6 +6,7 @@ import {
   BarChart3,
   CandlestickChart,
   Calculator,
+  ClipboardList,
   Database,
   FileUp,
   Gauge,
@@ -63,6 +64,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/backtests/new", label: "Novo backtest", icon: BarChart3 },
       { href: "/backtests", label: "Backtests", icon: History },
+      { href: "/bankroll-ledgers", label: "Gerenciamentos de banca", icon: ClipboardList },
     ],
   },
   {

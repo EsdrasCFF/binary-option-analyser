@@ -111,6 +111,11 @@ export default function AnalysisDetailPage({ params }: { params: Promise<{ id: s
     router.push(`/backtests/new?patternResultIds=${ids.join(",")}&analysisId=${id}`);
   }
 
+  function applyLedger() {
+    const ids = Array.from(selected);
+    router.push(`/bankroll-ledgers/new?patternResultIds=${ids.join(",")}&analysisId=${id}`);
+  }
+
   if (analysis.isLoading) {
     return <Skeleton className="h-64 w-full" />;
   }
@@ -166,9 +171,14 @@ export default function AnalysisDetailPage({ params }: { params: Promise<{ id: s
           {selected.size > 0 && (
             <div className="flex items-center justify-between rounded-md border bg-muted/50 p-3">
               <span className="text-sm">{selected.size} padrão(ões) selecionado(s)</span>
-              <Button size="sm" onClick={createBacktest}>
-                Criar backtest com selecionados
-              </Button>
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" onClick={applyLedger}>
+                  Aplicar gerenciamento
+                </Button>
+                <Button size="sm" onClick={createBacktest}>
+                  Criar backtest com selecionados
+                </Button>
+              </div>
             </div>
           )}
 

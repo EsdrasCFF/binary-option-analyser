@@ -3,8 +3,8 @@
  * (serverless Postgres). Cobre as entidades do domínio descritas no
  * briefing original: User, DataProvider, CurrencyPair, Candle, Analysis,
  * AnalysisConfiguration, PatternResult, Backtest, BacktestOperation,
- * BankrollConfiguration, MartingaleCalculation, MartingaleLevel,
- * ImportJob, AuditLog.
+ * BankrollLedger, BankrollLedgerEntry, BankrollConfiguration,
+ * MartingaleCalculation, MartingaleLevel, ImportJob, AuditLog.
  *
  * Convenções:
  * - Todos os timestamps em UTC (timestamptz do Postgres).
@@ -296,6 +296,48 @@ export const backtestOperations = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// BankrollLedger + BankrollLedgerEntry
+// (planilha MANUAL de operações — diferente do Backtest: o resultado de cada
+// linha é marcado pelo usuário, não calculado a partir do histórico de
+// candles. Vinculada a UMA análise: cada entry só pode usar um dos horários
+// selecionados na hora de criar o ledger.)
+// ---------------------------------------------------------------------------
+
+export const bankrollLedgers = pgTable(
+  "bankroll_ledgers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    analysisId: uuid("analysis_id").notNull().references(() => analyses.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 60 }), // opcional, renomeável depois (mesmo padrão do Backtest)
+    patternResultIds: jsonb("pattern_result_ids").notNull(), // horários selecionados na análise
+    initialBankroll: numeric("initial_bankroll", { precision: 18, scale: 2 }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("bankroll_ledgers_user_idx").on(table.userId)]
+);
+
+export const bankrollLedgerEntries = pgTable(
+  "bankroll_ledger_entries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ledgerId: uuid("ledger_id")
+      .notNull()
+      .references(() => bankrollLedgers.id, { onDelete: "cascade" }),
+    patternResultId: uuid("pattern_result_id")
+      .notNull()
+      .references(() => patternResults.id),
+    date: timestamp("date", { withTimezone: true }).notNull(), // data pura (meia-noite UTC), mesma convenção de operationDate
+    payoutPct: numeric("payout_pct", { precision: 5, scale: 2 }).notNull(),
+    entryValue: numeric("entry_value", { precision: 18, scale: 2 }).notNull(),
+    result: varchar("result", { length: 10 }).notNull(), // "win" | "loss" | "tie"
+    profitLoss: numeric("profit_loss", { precision: 18, scale: 2 }).notNull(), // derivado, recalculado a cada save
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("bankroll_ledger_entries_ledger_idx").on(table.ledgerId)]
+);
+
+// ---------------------------------------------------------------------------
 // BankrollConfiguration + MartingaleCalculation + MartingaleLevel
 // (histórico da Calculadora de Entradas)
 // ---------------------------------------------------------------------------
@@ -421,6 +463,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   dataProviders: many(dataProviders),
   analyses: many(analyses),
   backtests: many(backtests),
+  bankrollLedgers: many(bankrollLedgers),
   bankrollConfigurations: many(bankrollConfigurations),
   martingaleCalculations: many(martingaleCalculations),
 }));
@@ -437,6 +480,20 @@ export const analysesRelations = relations(analyses, ({ one, many }) => ({
 export const backtestsRelations = relations(backtests, ({ one, many }) => ({
   user: one(users, { fields: [backtests.userId], references: [users.id] }),
   operations: many(backtestOperations),
+}));
+
+export const bankrollLedgersRelations = relations(bankrollLedgers, ({ one, many }) => ({
+  user: one(users, { fields: [bankrollLedgers.userId], references: [users.id] }),
+  analysis: one(analyses, { fields: [bankrollLedgers.analysisId], references: [analyses.id] }),
+  entries: many(bankrollLedgerEntries),
+}));
+
+export const bankrollLedgerEntriesRelations = relations(bankrollLedgerEntries, ({ one }) => ({
+  ledger: one(bankrollLedgers, { fields: [bankrollLedgerEntries.ledgerId], references: [bankrollLedgers.id] }),
+  patternResult: one(patternResults, {
+    fields: [bankrollLedgerEntries.patternResultId],
+    references: [patternResults.id],
+  }),
 }));
 
 export const martingaleCalculationsRelations = relations(martingaleCalculations, ({ many }) => ({

@@ -344,6 +344,85 @@ export interface BacktestOperation {
   symbol: string;
 }
 
+/**
+ * Gerenciamento de banca MANUAL (planilha) — diferente do Backtest, o
+ * resultado de cada linha é marcado pelo usuário, não calculado a partir de
+ * candle histórico. Vinculado a UMA análise.
+ */
+export interface BankrollLedger {
+  id: string;
+  userId: string;
+  analysisId: string;
+  name: string | null;
+  patternResultIds: string[];
+  initialBankroll: string;
+  createdAt: string;
+}
+
+export interface BankrollLedgerSummary extends BankrollLedger {
+  analysisName: string;
+  totalOperations: number;
+  currentBalance: string;
+}
+
+export interface BankrollLedgerSlot {
+  id: string; // patternResultId
+  symbol: string;
+  timeOfDay: string;
+  predominantDirection: Direction | null;
+}
+
+export interface BankrollLedgerEntry {
+  id: string;
+  ledgerId: string;
+  patternResultId: string;
+  symbol: string;
+  timeOfDay: string;
+  date: string;
+  payoutPct: string;
+  entryValue: string;
+  result: "win" | "loss" | "tie";
+  profitLoss: string;
+  bankrollAfter: string;
+  createdAt: string;
+}
+
+export interface BankrollLedgerDetail {
+  ledger: BankrollLedger;
+  analysisName: string | null;
+  availableSlots: BankrollLedgerSlot[];
+  entries: BankrollLedgerEntry[];
+  totals: {
+    totalOperations: number;
+    wins: number;
+    losses: number;
+    ties: number;
+    currentBalance: string;
+  };
+}
+
+export interface CreateBankrollLedgerInput {
+  analysisId: string;
+  patternResultIds: string[];
+  name?: string;
+  initialBankroll: string;
+}
+
+export interface UpdateBankrollLedgerInput {
+  name?: string;
+  initialBankroll?: string;
+}
+
+export interface CreateBankrollLedgerEntryInput {
+  patternResultId: string;
+  date: string;
+  payoutPct: string;
+  entryValue: string;
+  result: "win" | "loss" | "tie";
+}
+
+export type UpdateBankrollLedgerEntryInput = Partial<CreateBankrollLedgerEntryInput>;
+
 export interface MartingaleLevelResult {
   levelIndex: number;
   levelName: string;
