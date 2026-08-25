@@ -299,8 +299,10 @@ export const backtestOperations = pgTable(
 // BankrollLedger + BankrollLedgerEntry
 // (planilha MANUAL de operações — diferente do Backtest: o resultado de cada
 // linha é marcado pelo usuário, não calculado a partir do histórico de
-// candles. Vinculada a UMA análise: cada entry só pode usar um dos horários
-// selecionados na hora de criar o ledger.)
+// candles. Vinculada a UMA análise, mas essa vinculação pode ser trocada
+// depois — os horários disponíveis pra cada entry são sempre os da análise
+// vinculada NO MOMENTO, e cada entry já guarda seu próprio patternResultId,
+// então trocar a análise não afeta o que já foi lançado.)
 // ---------------------------------------------------------------------------
 
 export const bankrollLedgers = pgTable(
@@ -310,7 +312,6 @@ export const bankrollLedgers = pgTable(
     userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
     analysisId: uuid("analysis_id").notNull().references(() => analyses.id, { onDelete: "cascade" }),
     name: varchar("name", { length: 60 }), // opcional, renomeável depois (mesmo padrão do Backtest)
-    patternResultIds: jsonb("pattern_result_ids").notNull(), // horários selecionados na análise
     initialBankroll: numeric("initial_bankroll", { precision: 18, scale: 2 }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },

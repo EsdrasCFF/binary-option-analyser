@@ -347,14 +347,15 @@ export interface BacktestOperation {
 /**
  * Gerenciamento de banca MANUAL (planilha) — diferente do Backtest, o
  * resultado de cada linha é marcado pelo usuário, não calculado a partir de
- * candle histórico. Vinculado a UMA análise.
+ * candle histórico. Vinculado a UMA análise, mas essa vinculação pode ser
+ * trocada depois (ver `UpdateBankrollLedgerInput.analysisId`) sem afetar as
+ * linhas já lançadas.
  */
 export interface BankrollLedger {
   id: string;
   userId: string;
   analysisId: string;
   name: string | null;
-  patternResultIds: string[];
   initialBankroll: string;
   createdAt: string;
 }
@@ -378,6 +379,7 @@ export interface BankrollLedgerEntry {
   patternResultId: string;
   symbol: string;
   timeOfDay: string;
+  predominantDirection: Direction | null;
   date: string;
   payoutPct: string;
   entryValue: string;
@@ -403,7 +405,6 @@ export interface BankrollLedgerDetail {
 
 export interface CreateBankrollLedgerInput {
   analysisId: string;
-  patternResultIds: string[];
   name?: string;
   initialBankroll: string;
 }
@@ -411,6 +412,7 @@ export interface CreateBankrollLedgerInput {
 export interface UpdateBankrollLedgerInput {
   name?: string;
   initialBankroll?: string;
+  analysisId?: string;
 }
 
 export interface CreateBankrollLedgerEntryInput {

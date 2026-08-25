@@ -16,6 +16,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatDate, formatDateTime, formatPercent, formatStatus } from "@/lib/format";
 import { DayPeriod, PatternResultsQuery } from "@/lib/api-client/types";
+import { LinkLedgerDialog } from "@/components/link-ledger-dialog";
 import { ArrowDown, ArrowUp, ArrowUpDown, Info } from "lucide-react";
 
 type SortBy = NonNullable<PatternResultsQuery["sortBy"]>;
@@ -112,8 +113,7 @@ export default function AnalysisDetailPage({ params }: { params: Promise<{ id: s
   }
 
   function applyLedger() {
-    const ids = Array.from(selected);
-    router.push(`/bankroll-ledgers/new?patternResultIds=${ids.join(",")}&analysisId=${id}`);
+    router.push(`/bankroll-ledgers/new?analysisId=${id}`);
   }
 
   if (analysis.isLoading) {
@@ -132,7 +132,13 @@ export default function AnalysisDetailPage({ params }: { params: Promise<{ id: s
           <h1 className="text-2xl font-semibold tracking-tight">{a.name}</h1>
           <p className="text-muted-foreground">Criada em {formatDateTime(a.createdAt)}</p>
         </div>
-        <Badge variant={a.status === "error" ? "destructive" : "secondary"}>{formatStatus(a.status)}</Badge>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={applyLedger}>
+            Aplicar gerenciamento
+          </Button>
+          <LinkLedgerDialog analysisId={id} />
+          <Badge variant={a.status === "error" ? "destructive" : "secondary"}>{formatStatus(a.status)}</Badge>
+        </div>
       </div>
 
       {a.status === "error" && a.errorMessage && (
@@ -171,14 +177,9 @@ export default function AnalysisDetailPage({ params }: { params: Promise<{ id: s
           {selected.size > 0 && (
             <div className="flex items-center justify-between rounded-md border bg-muted/50 p-3">
               <span className="text-sm">{selected.size} padrão(ões) selecionado(s)</span>
-              <div className="flex gap-2">
-                <Button size="sm" variant="outline" onClick={applyLedger}>
-                  Aplicar gerenciamento
-                </Button>
-                <Button size="sm" onClick={createBacktest}>
-                  Criar backtest com selecionados
-                </Button>
-              </div>
+              <Button size="sm" onClick={createBacktest}>
+                Criar backtest com selecionados
+              </Button>
             </div>
           )}
 

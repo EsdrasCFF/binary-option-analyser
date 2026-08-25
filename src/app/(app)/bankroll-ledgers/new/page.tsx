@@ -16,7 +16,6 @@ import { AlertTriangle } from "lucide-react";
 export default function NewBankrollLedgerPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const patternResultIds = (searchParams.get("patternResultIds") ?? "").split(",").filter(Boolean);
   const analysisId = searchParams.get("analysisId") ?? "";
 
   const [name, setName] = useState("");
@@ -34,7 +33,6 @@ export default function NewBankrollLedgerPage() {
     createLedger.mutate(
       {
         analysisId,
-        patternResultIds,
         name: name.trim() || undefined,
         initialBankroll,
       },
@@ -50,14 +48,14 @@ export default function NewBankrollLedgerPage() {
     );
   }
 
-  if (patternResultIds.length === 0 || !analysisId) {
+  if (!analysisId) {
     return (
       <div className="max-w-2xl">
         <Alert>
           <AlertTriangle />
-          <AlertTitle>Nenhum padrão selecionado</AlertTitle>
+          <AlertTitle>Nenhuma análise informada</AlertTitle>
           <AlertDescription>
-            Escolha os horários a acompanhar na aba &quot;Ranking de padrões&quot; de uma{" "}
+            Abra uma{" "}
             <Link href="/analyses" className="underline underline-offset-4">
               análise
             </Link>{" "}
@@ -73,8 +71,7 @@ export default function NewBankrollLedgerPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Novo gerenciamento de banca</h1>
         <p className="text-muted-foreground">
-          {patternResultIds.length} horário(s) selecionado(s) — vão ficar disponíveis pra escolher em cada linha da
-          planilha.
+          Todos os horários da análise vão ficar disponíveis pra escolher em cada linha da planilha.
         </p>
       </div>
 

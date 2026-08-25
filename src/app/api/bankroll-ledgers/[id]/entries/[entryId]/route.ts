@@ -8,7 +8,7 @@ import { Decimal } from "decimal.js";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db/client";
-import { bankrollLedgerEntries, bankrollLedgers } from "@/db/schema";
+import { bankrollLedgerEntries, bankrollLedgers, patternResults } from "@/db/schema";
 import { requireUserId } from "@/lib/api/current-user";
 import { ApiError, decimalString, handleErrors, isUuid, isoDateTimeString, parseJsonBody, uuidString } from "@/lib/api/http";
 import { computeEntryProfitLoss } from "@/lib/core/bankroll-ledger";
@@ -51,9 +51,13 @@ export async function PATCH(req: NextRequest, ctx: RouteContext) {
     const body = await parseJsonBody(req, patchBodySchema);
 
     if (body.patternResultId !== undefined) {
-      const allowedIds = ledger.patternResultIds as string[];
-      if (!allowedIds.includes(body.patternResultId)) {
-        throw new ApiError("Esse horário não está entre os selecionados neste gerenciamento.", 422);
+      const [pattern] = await db
+        .select({ id: patternResults.id })
+        .from(patternResults)
+        .where(and(eq(patternResults.id, body.patternResultId), eq(patternResults.analysisId, ledger.analysisId)))
+        .limit(1);
+      if (!pattern) {
+        throw new ApiError("Esse horário não pertence à análise vinculada a este gerenciamento.", 422);
       }
     }
     if (body.entryValue !== undefined && Number(body.entryValue) <= 0) {

@@ -1,0 +1,1 @@
+ALTER TABLE "bankroll_ledgers" DROP COLUMN "pattern_result_ids";

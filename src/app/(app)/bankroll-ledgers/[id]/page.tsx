@@ -18,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { RenameBankrollLedgerDialog } from "@/components/rename-bankroll-ledger-dialog";
+import { LinkAnalysisDialog } from "@/components/link-analysis-dialog";
 import { formatCurrency, formatDateTime } from "@/lib/format";
 import { Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
@@ -58,7 +59,21 @@ function LedgerRow({
   const [payoutPct, setPayoutPct] = useState(entry.payoutPct);
   const [entryValue, setEntryValue] = useState(entry.entryValue);
 
-  const slot = availableSlots.find((s) => s.id === entry.patternResultId);
+  // a linha pode ter sido lançada com um horário de uma análise que já não é
+  // mais a vinculada (o ledger pode ter sido re-vinculado depois) — nesse
+  // caso o horário não está em `availableSlots`, então incluímos a própria
+  // opção da linha na lista pra o select continuar mostrando o rótulo certo.
+  const slotOptions = availableSlots.some((s) => s.id === entry.patternResultId)
+    ? availableSlots
+    : [
+        {
+          id: entry.patternResultId,
+          symbol: entry.symbol,
+          timeOfDay: entry.timeOfDay,
+          predominantDirection: entry.predominantDirection,
+        },
+        ...availableSlots,
+      ];
 
   return (
     <TableRow>
@@ -75,7 +90,7 @@ function LedgerRow({
       </TableCell>
       <TableCell>
         <Select<string>
-          items={Object.fromEntries(availableSlots.map((s) => [s.id, `${s.symbol} ${s.timeOfDay}`]))}
+          items={Object.fromEntries(slotOptions.map((s) => [s.id, `${s.symbol} ${s.timeOfDay}`]))}
           value={entry.patternResultId}
           onValueChange={(v) => v && onUpdate(entry.id, { patternResultId: v })}
         >
@@ -83,7 +98,7 @@ function LedgerRow({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {availableSlots.map((s) => (
+            {slotOptions.map((s) => (
               <SelectItem key={s.id} value={s.id}>
                 {s.symbol} {s.timeOfDay}
               </SelectItem>
@@ -92,9 +107,9 @@ function LedgerRow({
         </Select>
       </TableCell>
       <TableCell>
-        {slot?.predominantDirection ? (
-          <Badge variant={slot.predominantDirection === "CALL" ? "default" : "secondary"}>
-            {slot.predominantDirection}
+        {entry.predominantDirection ? (
+          <Badge variant={entry.predominantDirection === "CALL" ? "default" : "secondary"}>
+            {entry.predominantDirection}
           </Badge>
         ) : (
           "—"
@@ -215,9 +230,12 @@ export default function BankrollLedgerDetailPage({ params }: { params: Promise<{
             </h1>
             <RenameBankrollLedgerDialog ledgerId={l.id} currentName={l.name} />
           </div>
-          <p className="text-muted-foreground">
-            Análise: {analysisName} · Criado em {formatDateTime(l.createdAt)}
-          </p>
+          <div className="flex items-center gap-1 text-muted-foreground">
+            <p>
+              Análise: {analysisName} · Criado em {formatDateTime(l.createdAt)}
+            </p>
+            <LinkAnalysisDialog ledgerId={l.id} currentAnalysisId={l.analysisId} />
+          </div>
         </div>
       </div>
 

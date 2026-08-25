@@ -1,28 +1,34 @@
 /**
  * GET    /api/bankroll-ledgers/:id — detalhe: dados do ledger, os horários
  *                                    disponíveis pra escolher em cada linha
- *                                    (`availableSlots`, vindos dos
- *                                    `patternResultIds` selecionados na
- *                                    criação), as linhas já lançadas (com
- *                                    saldo acumulado calculado em ordem) e os
- *                                    totais.
- * PATCH  /api/bankroll-ledgers/:id — renomeia e/ou ajusta a banca inicial.
+ *                                    (`availableSlots`, TODOS os da análise
+ *                                    vinculada no momento — não só os
+ *                                    selecionados na criação), as linhas já
+ *                                    lançadas (com saldo acumulado calculado
+ *                                    em ordem) e os totais.
+ * PATCH  /api/bankroll-ledgers/:id — renomeia, ajusta a banca inicial e/ou
+ *                                    troca a análise vinculada. Trocar a
+ *                                    análise não apaga nem afeta as linhas já
+ *                                    lançadas: cada uma guarda seu próprio
+ *                                    patternResultId, resolvido direto na
+ *                                    consulta.
  * DELETE /api/bankroll-ledgers/:id — remove (cascade apaga as linhas).
  */
 import { NextRequest, NextResponse } from "next/server";
 import { Decimal } from "decimal.js";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db/client";
 import { analyses, bankrollLedgerEntries, bankrollLedgers, currencyPairs, patternResults } from "@/db/schema";
 import { requireUserId } from "@/lib/api/current-user";
-import { ApiError, decimalString, handleErrors, isUuid, parseJsonBody } from "@/lib/api/http";
+import { ApiError, decimalString, handleErrors, isUuid, parseJsonBody, uuidString } from "@/lib/api/http";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
 const patchBodySchema = z.object({
   name: z.string().trim().min(1).max(60).optional(),
   initialBankroll: decimalString.optional(),
+  analysisId: uuidString.optional(),
 });
 
 async function loadOwnedLedger(id: string) {
@@ -46,8 +52,7 @@ export async function GET(_req: NextRequest, ctx: RouteContext) {
 
     const [analysis] = await db.select({ name: analyses.name }).from(analyses).where(eq(analyses.id, ledger.analysisId));
 
-    const patternIds = ledger.patternResultIds as string[];
-    const slotsRaw = await db
+    const availableSlots = await db
       .select({
         id: patternResults.id,
         symbol: currencyPairs.symbol,
@@ -56,17 +61,15 @@ export async function GET(_req: NextRequest, ctx: RouteContext) {
       })
       .from(patternResults)
       .innerJoin(currencyPairs, eq(patternResults.currencyPairId, currencyPairs.id))
-      .where(inArray(patternResults.id, patternIds));
-
-    // mantém a ordem de patternIds (a ordem em que foram selecionados na análise)
-    const slotsById = new Map(slotsRaw.map((s) => [s.id, s]));
-    const availableSlots = patternIds.map((pid) => slotsById.get(pid)).filter((s): s is NonNullable<typeof s> => !!s);
+      .where(eq(patternResults.analysisId, ledger.analysisId))
+      .orderBy(asc(currencyPairs.symbol), asc(patternResults.timeOfDay));
 
     const entryRows = await db
       .select({
         entry: bankrollLedgerEntries,
         symbol: currencyPairs.symbol,
         timeOfDay: patternResults.timeOfDay,
+        predominantDirection: patternResults.predominantDirection,
       })
       .from(bankrollLedgerEntries)
       .innerJoin(patternResults, eq(bankrollLedgerEntries.patternResultId, patternResults.id))
@@ -87,6 +90,7 @@ export async function GET(_req: NextRequest, ctx: RouteContext) {
         ...r.entry,
         symbol: r.symbol,
         timeOfDay: r.timeOfDay,
+        predominantDirection: r.predominantDirection,
         bankrollAfter: running.toFixed(2),
       };
     });
@@ -110,11 +114,20 @@ export async function GET(_req: NextRequest, ctx: RouteContext) {
 export async function PATCH(req: NextRequest, ctx: RouteContext) {
   return handleErrors(async () => {
     const { id } = await ctx.params;
-    await loadOwnedLedger(id);
+    const ledger = await loadOwnedLedger(id);
     const body = await parseJsonBody(req, patchBodySchema);
 
     if (body.initialBankroll !== undefined && Number(body.initialBankroll) <= 0) {
       throw new ApiError("initialBankroll deve ser maior que zero.", 422);
+    }
+
+    if (body.analysisId !== undefined) {
+      const [analysis] = await db
+        .select({ id: analyses.id })
+        .from(analyses)
+        .where(and(eq(analyses.id, body.analysisId), eq(analyses.userId, ledger.userId)))
+        .limit(1);
+      if (!analysis) throw new ApiError("Análise não encontrada.", 404);
     }
 
     const [updated] = await db
@@ -122,6 +135,7 @@ export async function PATCH(req: NextRequest, ctx: RouteContext) {
       .set({
         ...(body.name !== undefined ? { name: body.name } : {}),
         ...(body.initialBankroll !== undefined ? { initialBankroll: body.initialBankroll } : {}),
+        ...(body.analysisId !== undefined ? { analysisId: body.analysisId } : {}),
       })
       .where(eq(bankrollLedgers.id, id))
       .returning();
