@@ -4,6 +4,7 @@ import { use, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAnalysis } from "@/lib/api-client/analyses";
 import { usePatternResults } from "@/lib/api-client/pattern-results";
+import { useCurrencyPairs } from "@/lib/api-client/currency-pairs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -83,11 +84,16 @@ export default function AnalysisDetailPage({ params }: { params: Promise<{ id: s
   const { id } = use(params);
   const router = useRouter();
   const analysis = useAnalysis(id);
+  const currencyPairs = useCurrencyPairs();
   const [period, setPeriod] = useState<DayPeriod | undefined>(undefined);
+  const [currencyPairId, setCurrencyPairId] = useState<string | undefined>(undefined);
   const [sortBy, setSortBy] = useState<SortBy>("repetitionPct");
   const [order, setOrder] = useState<"asc" | "desc">("desc");
-  const patternResults = usePatternResults({ analysisId: id, sortBy, order, period });
+  const patternResults = usePatternResults({ analysisId: id, sortBy, order, period, currencyPairId });
   const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  const analysisPairIds = new Set(analysis.data?.configuration?.currencyPairIds ?? []);
+  const analysisPairs = (currencyPairs.data?.items ?? []).filter((p) => analysisPairIds.has(p.id));
 
   function handleSort(column: SortBy) {
     if (sortBy === column) {
@@ -154,24 +160,47 @@ export default function AnalysisDetailPage({ params }: { params: Promise<{ id: s
         </TabsList>
 
         <TabsContent value="ranking" className="flex flex-col gap-4">
-          <div className="w-56">
-            <Select
-              items={{ all: "Todos os horários", ...DAY_PERIOD_LABELS }}
-              value={period ?? "all"}
-              onValueChange={(v) => setPeriod(v && v !== "all" ? (v as DayPeriod) : undefined)}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todos os horários</SelectItem>
-                {(Object.keys(DAY_PERIOD_LABELS) as DayPeriod[]).map((p) => (
-                  <SelectItem key={p} value={p}>
-                    {DAY_PERIOD_LABELS[p]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          <div className="flex gap-2">
+            {analysisPairs.length > 1 && (
+              <div className="w-56">
+                <Select
+                  items={{ all: "Todas as divisas", ...Object.fromEntries(analysisPairs.map((p) => [p.id, p.symbol])) }}
+                  value={currencyPairId ?? "all"}
+                  onValueChange={(v) => setCurrencyPairId(v && v !== "all" ? v : undefined)}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todas as divisas</SelectItem>
+                    {analysisPairs.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.symbol}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <div className="w-56">
+              <Select
+                items={{ all: "Todos os horários", ...DAY_PERIOD_LABELS }}
+                value={period ?? "all"}
+                onValueChange={(v) => setPeriod(v && v !== "all" ? (v as DayPeriod) : undefined)}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos os horários</SelectItem>
+                  {(Object.keys(DAY_PERIOD_LABELS) as DayPeriod[]).map((p) => (
+                    <SelectItem key={p} value={p}>
+                      {DAY_PERIOD_LABELS[p]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           {selected.size > 0 && (
