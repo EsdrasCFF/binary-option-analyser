@@ -1,0 +1,2 @@
+ALTER TABLE "multi_period_analysis_configurations" ADD COLUMN "start_date" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "multi_period_analysis_configurations" ADD COLUMN "end_date" timestamp with time zone;

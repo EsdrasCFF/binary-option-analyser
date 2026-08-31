@@ -70,6 +70,9 @@ const STATUS_LABELS: Record<string, string> = {
   win: "Vitória",
   loss: "Derrota",
   tie: "Empate",
+  ignore: "Ignorar",
+  count_as_loss: "Contar como derrota",
+  count_as_tie: "Contar como empate",
 };
 
 export function formatStatus(status: string): string {

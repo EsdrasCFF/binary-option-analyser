@@ -13,6 +13,7 @@ import {
   History,
   LineChart,
   ListChecks,
+  Sparkles,
   Wallet,
 } from "lucide-react";
 import {
@@ -57,6 +58,8 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/analyses/new", label: "Nova análise", icon: LineChart },
       { href: "/analyses", label: "Análises", icon: ListChecks },
+      { href: "/analyses-plus/new", label: "Nova análise Plus", icon: Sparkles },
+      { href: "/analyses-plus", label: "Análises Plus", icon: ListChecks },
     ],
   },
   {

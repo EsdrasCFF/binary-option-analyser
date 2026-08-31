@@ -2,9 +2,11 @@
  * Schema Drizzle ORM, dialeto Postgres, pensado para rodar em Neon
  * (serverless Postgres). Cobre as entidades do domínio descritas no
  * briefing original: User, DataProvider, CurrencyPair, Candle, Analysis,
- * AnalysisConfiguration, PatternResult, Backtest, BacktestOperation,
- * BankrollLedger, BankrollLedgerEntry, BankrollConfiguration,
- * MartingaleCalculation, MartingaleLevel, ImportJob, AuditLog.
+ * AnalysisConfiguration, PatternResult, MultiPeriodAnalysis (a "Análise
+ * Plus"), MultiPeriodAnalysisConfiguration, MultiPeriodPatternResult,
+ * MultiPeriodWindow, Backtest, BacktestOperation, BankrollLedger,
+ * BankrollLedgerEntry, BankrollConfiguration, MartingaleCalculation,
+ * MartingaleLevel, ImportJob, AuditLog.
  *
  * Convenções:
  * - Todos os timestamps em UTC (timestamptz do Postgres).
@@ -49,6 +51,7 @@ export const patternStatusEnum = pgEnum("pattern_status", [
   "inativo",
   "amostra_insuficiente",
 ]);
+export const dataProviderTypeEnum = pgEnum("data_provider_type", ["csv", "api"]);
 export const jobStatusEnum = pgEnum("job_status", [
   "pending",
   "processing",
@@ -56,7 +59,30 @@ export const jobStatusEnum = pgEnum("job_status", [
   "error",
   "cancelled",
 ]);
-export const dataProviderTypeEnum = pgEnum("data_provider_type", ["csv", "api"]);
+export const multiPeriodClassificationEnum = pgEnum("multi_period_classification", [
+  "excelente",
+  "forte",
+  "bom",
+  "observar",
+  "descartar",
+]);
+export const multiPeriodRecommendationEnum = pgEnum("multi_period_recommendation", [
+  "a_favor",
+  "contra",
+  "observar",
+  "descartar",
+]);
+export const multiPeriodMomentumEnum = pgEnum("multi_period_momentum", [
+  "fortalecendo",
+  "estavel",
+  "enfraquecendo",
+  "possivel_inversao",
+]);
+export const multiPeriodInversionEnum = pgEnum("multi_period_inversion", [
+  "none",
+  "possible",
+  "confirmed",
+]);
 
 // ---------------------------------------------------------------------------
 // User
@@ -225,6 +251,157 @@ export const patternResults = pgTable(
     index("pattern_results_repetition_pct_idx").on(table.repetitionPct),
     index("pattern_results_status_idx").on(table.status),
   ]
+);
+
+// ---------------------------------------------------------------------------
+// MultiPeriodAnalysis (a "Análise Plus") + configuração + resultados
+//
+// Paralela à Analysis/PatternResult acima — não substitui nem altera a
+// análise de período único, que continua existindo. Aqui o usuário informa
+// só um "período máximo" (`maxDays`, múltiplo de 10, mínimo 50) e o motor
+// (`src/lib/core/multi-period-analyzer.ts`) gera sozinho as janelas
+// estruturais descendo de 10 em 10 até 50 dias, mais uma janela de momentum
+// fixa em 40 dias — todas ancoradas na MESMA data de referência
+// (`referenceDate`, capturada uma vez ao processar), buscando os candles do
+// período máximo uma única vez e derivando as janelas menores por corte de
+// data em memória (ver seção de performance do motor).
+//
+// Um "padrão" aqui é a chave PAR + HORÁRIO + DIREÇÃO (a direção é decidida
+// pela janela máxima e testada nas demais — não são registros
+// independentes por janela). `multi_period_windows` guarda uma linha por
+// janela de cada padrão, incluindo as `occurrences` (dia -> CALL/PUT/DOJI),
+// preparando a base para futuramente calcular sequências de WIN/LOSS sem
+// precisar mudar o schema de novo.
+// ---------------------------------------------------------------------------
+
+export const multiPeriodAnalyses = pgTable(
+  "multi_period_analyses",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 255 }).notNull(),
+    status: jobStatusEnum("status").notNull().default("pending"),
+    progressPct: integer("progress_pct").notNull().default(0),
+    errorMessage: text("error_message"),
+    // capturada uma única vez ao iniciar o processamento — todas as janelas
+    // (estruturais e a de momentum) terminam nesta mesma data/hora, nunca
+    // usam candles posteriores a ela (sem look-ahead, pronto para backtest).
+    referenceDate: timestamp("reference_date", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("multi_period_analyses_user_idx").on(table.userId),
+    index("multi_period_analyses_status_idx").on(table.status),
+  ]
+);
+
+export const multiPeriodAnalysisConfigurations = pgTable(
+  "multi_period_analysis_configurations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    analysisId: uuid("analysis_id")
+      .notNull()
+      .references(() => multiPeriodAnalyses.id, { onDelete: "cascade" }),
+    currencyPairIds: jsonb("currency_pair_ids").notNull(),
+    timeframe: varchar("timeframe", { length: 10 }).notNull(),
+    // período máximo EFETIVO usado pelo motor — sempre múltiplo de 10,
+    // mínimo 50 (arredondado pra baixo quando vem de startDate/endDate). As
+    // janelas estruturais são derivadas automaticamente (maxDays,
+    // maxDays-10, ... até >=50) + uma janela de momentum fixa em 40 dias.
+    maxDays: integer("max_days").notNull(),
+    // preenchidos só quando o usuário escolheu "período específico" (em vez
+    // de "últimos N dias a partir de agora") — mesmo padrão de
+    // `analysisConfigurations.startDate/endDate`. `endDate`, quando
+    // presente, também vira a `referenceDate` do processamento (fixa, não
+    // rola com o tempo a cada reprocessamento).
+    startDate: timestamp("start_date", { withTimezone: true }),
+    endDate: timestamp("end_date", { withTimezone: true }),
+    startTime: varchar("start_time", { length: 5 }),
+    endTime: varchar("end_time", { length: 5 }),
+    timezone: varchar("timezone", { length: 64 }).notNull().default("UTC"),
+    weekdays: jsonb("weekdays"),
+    dataProviderId: uuid("data_provider_id").references(() => dataProviders.id),
+    dojiTolerancePct: numeric("doji_tolerance_pct", { precision: 6, scale: 4 }).notNull().default("0"),
+    dojiPolicy: dojiPolicyEnum("doji_policy").notNull().default("ignore"),
+    // % mínimo, na direção escolhida, para uma janela estrutural contar como
+    // "confirmada" no cálculo de persistência (seção 5 do motor).
+    persistenceThresholdPct: numeric("persistence_threshold_pct", { precision: 5, scale: 2 })
+      .notNull()
+      .default("70"),
+  }
+);
+
+export const multiPeriodPatternResults = pgTable(
+  "multi_period_pattern_results",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    analysisId: uuid("analysis_id")
+      .notNull()
+      .references(() => multiPeriodAnalyses.id, { onDelete: "cascade" }),
+    currencyPairId: uuid("currency_pair_id")
+      .notNull()
+      .references(() => currencyPairs.id),
+    timeframe: varchar("timeframe", { length: 10 }).notNull(),
+    timeOfDay: varchar("time_of_day", { length: 5 }).notNull(),
+    timezone: varchar("timezone", { length: 64 }).notNull(),
+    direction: directionEnum("direction").notNull(), // sempre CALL ou PUT, nunca DOJI
+
+    structuralAverage: numeric("structural_average", { precision: 5, scale: 2 }).notNull(),
+    confidenceScore: integer("confidence_score").notNull(), // 0-100
+    classification: multiPeriodClassificationEnum("classification").notNull(),
+    recommendation: multiPeriodRecommendationEnum("recommendation").notNull(),
+    momentumTrend: multiPeriodMomentumEnum("momentum_trend").notNull(),
+    inversionState: multiPeriodInversionEnum("inversion_state").notNull(),
+
+    persistenceConfirmed: integer("persistence_confirmed").notNull(),
+    persistenceTotal: integer("persistence_total").notNull(),
+    persistencePercentage: numeric("persistence_percentage", { precision: 5, scale: 2 }).notNull(),
+    stabilityRange: numeric("stability_range", { precision: 6, scale: 2 }).notNull(),
+    stabilityStdDev: numeric("stability_std_dev", { precision: 6, scale: 2 }).notNull(),
+    sampleMin: integer("sample_min").notNull(),
+
+    // subtotais do score — DEVEM somar `confidenceScore` (30+30+20+15+5 = 100 no máximo)
+    scorePersistence: numeric("score_persistence", { precision: 5, scale: 2 }).notNull(),
+    scoreFrequency: numeric("score_frequency", { precision: 5, scale: 2 }).notNull(),
+    scoreStability: numeric("score_stability", { precision: 5, scale: 2 }).notNull(),
+    scoreSample: numeric("score_sample", { precision: 5, scale: 2 }).notNull(),
+    scoreMomentum: numeric("score_momentum", { precision: 5, scale: 2 }).notNull(),
+
+    recentMomentumFrequency: numeric("recent_momentum_frequency", { precision: 5, scale: 2 }).notNull(),
+    recentMomentumOppositeFrequency: numeric("recent_momentum_opposite_frequency", {
+      precision: 5,
+      scale: 2,
+    }).notNull(),
+    recentMomentumValidSamples: integer("recent_momentum_valid_samples").notNull(),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("multi_period_pattern_results_analysis_idx").on(table.analysisId),
+    index("multi_period_pattern_results_score_idx").on(table.confidenceScore),
+  ]
+);
+
+export const multiPeriodWindows = pgTable(
+  "multi_period_windows",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    patternResultId: uuid("pattern_result_id")
+      .notNull()
+      .references(() => multiPeriodPatternResults.id, { onDelete: "cascade" }),
+    days: integer("days").notNull(),
+    isMomentum: boolean("is_momentum").notNull().default(false), // true só para a janela de 40D
+    frequency: numeric("frequency", { precision: 5, scale: 2 }).notNull(), // % da direção do padrão nesta janela
+    validSamples: integer("valid_samples").notNull(),
+    callCount: integer("call_count").notNull(),
+    putCount: integer("put_count").notNull(),
+    dojiCount: integer("doji_count").notNull(),
+    // dia -> CALL/PUT/DOJI nesta janela — mesma forma de `pattern_results.occurrences`,
+    // guardado para permitir calcular no futuro maxConsecutiveWins/Losses sem migration nova.
+    occurrences: jsonb("occurrences").notNull(),
+  },
+  (table) => [index("multi_period_windows_pattern_result_idx").on(table.patternResultId)]
 );
 
 // ---------------------------------------------------------------------------
@@ -463,6 +640,7 @@ export const auditLogs = pgTable(
 export const usersRelations = relations(users, ({ many }) => ({
   dataProviders: many(dataProviders),
   analyses: many(analyses),
+  multiPeriodAnalyses: many(multiPeriodAnalyses),
   backtests: many(backtests),
   bankrollLedgers: many(bankrollLedgers),
   bankrollConfigurations: many(bankrollConfigurations),
@@ -476,6 +654,30 @@ export const analysesRelations = relations(analyses, ({ one, many }) => ({
     references: [analysisConfigurations.analysisId],
   }),
   patternResults: many(patternResults),
+}));
+
+export const multiPeriodAnalysesRelations = relations(multiPeriodAnalyses, ({ one, many }) => ({
+  user: one(users, { fields: [multiPeriodAnalyses.userId], references: [users.id] }),
+  configuration: one(multiPeriodAnalysisConfigurations, {
+    fields: [multiPeriodAnalyses.id],
+    references: [multiPeriodAnalysisConfigurations.analysisId],
+  }),
+  patternResults: many(multiPeriodPatternResults),
+}));
+
+export const multiPeriodPatternResultsRelations = relations(multiPeriodPatternResults, ({ one, many }) => ({
+  analysis: one(multiPeriodAnalyses, {
+    fields: [multiPeriodPatternResults.analysisId],
+    references: [multiPeriodAnalyses.id],
+  }),
+  windows: many(multiPeriodWindows),
+}));
+
+export const multiPeriodWindowsRelations = relations(multiPeriodWindows, ({ one }) => ({
+  patternResult: one(multiPeriodPatternResults, {
+    fields: [multiPeriodWindows.patternResultId],
+    references: [multiPeriodPatternResults.id],
+  }),
 }));
 
 export const backtestsRelations = relations(backtests, ({ one, many }) => ({

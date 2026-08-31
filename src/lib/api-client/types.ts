@@ -229,6 +229,152 @@ export interface PaginatedResult<T> {
   offset: number;
 }
 
+// ---------------------------------------------------------------------------
+// MultiPeriodAnalysis ("Análise Plus") — paralela à Analysis/PatternResult
+// acima. Um padrão é a chave PAR+HORÁRIO+DIREÇÃO avaliado em várias janelas
+// (50D, 60D, ... até `maxDays`, + uma janela de momentum fixa em 40D), com um
+// Confidence Score 0-100 combinando persistência, frequência, estabilidade,
+// amostra e momentum. Ver `src/lib/core/multi-period-scoring.ts`.
+// ---------------------------------------------------------------------------
+
+export type MultiPeriodClassification = "excelente" | "forte" | "bom" | "observar" | "descartar";
+export type MultiPeriodRecommendation = "a_favor" | "contra" | "observar" | "descartar";
+export type MultiPeriodMomentumTrend = "fortalecendo" | "estavel" | "enfraquecendo" | "possivel_inversao";
+export type MultiPeriodInversionState = "none" | "possible" | "confirmed";
+
+export interface MultiPeriodAnalysis {
+  id: string;
+  userId: string;
+  name: string;
+  status: JobStatus;
+  progressPct: number;
+  errorMessage: string | null;
+  referenceDate: string | null;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export interface MultiPeriodAnalysisConfiguration {
+  id: string;
+  analysisId: string;
+  currencyPairIds: string[];
+  timeframe: string;
+  /** Período máximo EFETIVO — múltiplo de 10, mínimo 50. As janelas estruturais e a de momentum (40D) são derivadas automaticamente. */
+  maxDays: number;
+  /** Preenchidos só no modo "período específico" (em vez de "últimos N dias"). */
+  startDate: string | null;
+  endDate: string | null;
+  startTime: string | null;
+  endTime: string | null;
+  timezone: string;
+  weekdays: number[] | null;
+  dataProviderId: string | null;
+  dojiTolerancePct: string;
+  dojiPolicy: DojiPolicy;
+  persistenceThresholdPct: string;
+}
+
+export interface MultiPeriodAnalysisDetail {
+  analysis: MultiPeriodAnalysis;
+  configuration: MultiPeriodAnalysisConfiguration | null;
+  patternResultCount: number;
+}
+
+export interface CreateMultiPeriodAnalysisInput {
+  name: string;
+  currencyPairIds: string[];
+  timeframe: string;
+  /** Modo "últimos N dias". Informe isto OU startDate+endDate. */
+  maxDays?: number;
+  /** Modo "período específico". */
+  startDate?: string;
+  endDate?: string;
+  startTime?: string;
+  endTime?: string;
+  timezone: string;
+  weekdays?: number[];
+  dataProviderId?: string;
+  dojiTolerancePct?: string;
+  dojiPolicy?: DojiPolicy;
+  persistenceThresholdPct?: string;
+}
+
+export interface CreateMultiPeriodAnalysisResult {
+  analysis: MultiPeriodAnalysis;
+  processed: boolean;
+  candlesLoaded?: number;
+  patternsFound?: number;
+  error?: string;
+}
+
+export interface MultiPeriodWindow {
+  id: string;
+  patternResultId: string;
+  days: number;
+  isMomentum: boolean;
+  /** % de ocorrências, dentro da janela, na direção do padrão. */
+  frequency: string;
+  validSamples: number;
+  callCount: number;
+  putCount: number;
+  dojiCount: number;
+}
+
+export interface MultiPeriodPatternResult {
+  id: string;
+  analysisId: string;
+  currencyPairId: string;
+  timeframe: string;
+  timeOfDay: string;
+  timezone: string;
+  direction: "CALL" | "PUT";
+  structuralAverage: string;
+  confidenceScore: number;
+  classification: MultiPeriodClassification;
+  recommendation: MultiPeriodRecommendation;
+  momentumTrend: MultiPeriodMomentumTrend;
+  inversionState: MultiPeriodInversionState;
+  persistenceConfirmed: number;
+  persistenceTotal: number;
+  persistencePercentage: string;
+  stabilityRange: string;
+  stabilityStdDev: string;
+  sampleMin: number;
+  scorePersistence: string;
+  scoreFrequency: string;
+  scoreStability: string;
+  scoreSample: string;
+  scoreMomentum: string;
+  recentMomentumFrequency: string;
+  recentMomentumOppositeFrequency: string;
+  recentMomentumValidSamples: number;
+  createdAt: string;
+  symbol: string;
+}
+
+/** Linha da tabela principal (`GET /api/multi-period-pattern-results`) — inclui o nome da análise de origem. */
+export interface MultiPeriodPatternResultSummary extends MultiPeriodPatternResult {
+  analysisName: string;
+}
+
+/** Detalhe com as janelas — usado na linha expandida e no Top 5. */
+export interface MultiPeriodPatternResultDetail extends MultiPeriodPatternResult {
+  windows: MultiPeriodWindow[];
+  momentumWindow: MultiPeriodWindow | null;
+}
+
+export interface MultiPeriodPatternResultsQuery {
+  analysisId?: string;
+  currencyPairId?: string;
+  direction?: "CALL" | "PUT";
+  classification?: MultiPeriodClassification;
+  recommendation?: MultiPeriodRecommendation;
+  sortBy?: "confidenceScore" | "structuralAverage" | "timeOfDay" | "persistencePercentage";
+  order?: "asc" | "desc";
+  limit?: number;
+  offset?: number;
+}
+
 export interface GroupStats {
   operations: number;
   wins: number;
