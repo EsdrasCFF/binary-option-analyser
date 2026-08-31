@@ -339,6 +339,9 @@ export interface MultiPeriodPatternResult {
   persistencePercentage: string;
   stabilityRange: string;
   stabilityStdDev: string;
+  /** Ocorrências válidas na maior janela estrutural — "dias válidos" pra exibição. */
+  totalValid: number;
+  /** Menor amostra válida entre as janelas estruturais — usado só na fórmula do score de amostra, não representa o total. */
   sampleMin: number;
   scorePersistence: string;
   scoreFrequency: string;

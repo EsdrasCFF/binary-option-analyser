@@ -99,6 +99,13 @@
       "when": 1788189636056,
       "tag": "0013_round_champions",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1788207423089,
+      "tag": "0014_solid_alice",
+      "breakpoints": true
     }
   ]
 }

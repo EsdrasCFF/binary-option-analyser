@@ -70,6 +70,9 @@ export interface MultiPeriodPatternResult {
   inversion: InversionState;
   persistence: { confirmed: number; total: number; percentage: Decimal };
   stability: { range: Decimal; standardDeviation: Decimal };
+  /** Ocorrências válidas na MAIOR janela estrutural (o período completo pedido) — "quantos dias entraram na análise", mesmo sentido de `PatternResult.totalValid` no motor de período único. */
+  totalValid: number;
+  /** Menor amostra válida entre as janelas estruturais — usado SÓ pra pontuar o critério de amostra (seção 8), nunca pra exibir "dias válidos" (é deliberadamente conservador, não é o total). */
   sampleMin: number;
   scores: ConfidenceScoreResult["scores"];
 }
@@ -260,6 +263,7 @@ export function analyzeMultiPeriod(
       inversion: scoreResult.inversion,
       persistence: scoreResult.persistence,
       stability: scoreResult.stability,
+      totalValid: farthestStructural.validSamples,
       sampleMin: scoreResult.sampleMin,
       scores: scoreResult.scores,
     });

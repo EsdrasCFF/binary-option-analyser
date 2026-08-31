@@ -102,6 +102,11 @@ describe("analyzeMultiPeriod — descoberta e janelas encaixadas (seções 2, 18
     expect(r.windows.map((w) => w.days)).toEqual([70, 60, 50]);
     expect(r.momentumWindow.days).toBe(40);
     expect(r.momentumWindow.isMomentum).toBe(true);
+    // "dias válidos" pra exibição = ocorrências da MAIOR janela estrutural
+    // (70D aqui), nunca a da janela de momentum (40D) nem o mínimo entre janelas.
+    expect(r.totalValid).toBe(r.windows[0].validSamples);
+    expect(r.windows[0].days).toBe(70);
+    expect(r.totalValid).not.toBe(r.momentumWindow.validSamples);
     expect(r.windows.every((w) => !w.isMomentum)).toBe(true);
   });
 

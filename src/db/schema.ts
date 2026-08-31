@@ -359,6 +359,10 @@ export const multiPeriodPatternResults = pgTable(
     persistencePercentage: numeric("persistence_percentage", { precision: 5, scale: 2 }).notNull(),
     stabilityRange: numeric("stability_range", { precision: 6, scale: 2 }).notNull(),
     stabilityStdDev: numeric("stability_std_dev", { precision: 6, scale: 2 }).notNull(),
+    // ocorrências válidas na MAIOR janela estrutural — "dias válidos" pra
+    // exibição, mesmo sentido de pattern_results.total_valid. NÃO confundir
+    // com sampleMin (menor amostra entre as janelas, usado só pro score).
+    totalValid: integer("total_valid").notNull(),
     sampleMin: integer("sample_min").notNull(),
 
     // subtotais do score — DEVEM somar `confidenceScore` (30+30+20+15+5 = 100 no máximo)

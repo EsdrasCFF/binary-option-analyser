@@ -194,6 +194,7 @@ function toPatternResultRow(
     persistencePercentage: result.persistence.percentage.toFixed(2),
     stabilityRange: result.stability.range.toFixed(2),
     stabilityStdDev: result.stability.standardDeviation.toFixed(2),
+    totalValid: result.totalValid,
     sampleMin: result.sampleMin,
     scorePersistence: result.scores.persistence.toFixed(2),
     scoreFrequency: result.scores.frequency.toFixed(2),

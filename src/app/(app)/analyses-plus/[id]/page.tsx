@@ -125,7 +125,8 @@ function MultiPeriodBreakdown({ detail }: { detail: MultiPeriodPatternResultDeta
           label="Persistência"
           value={`${detail.persistenceConfirmed}/${detail.persistenceTotal} (${formatPercent(detail.persistencePercentage)})`}
         />
-        <StatBox label="Amostra (mín.)" value={String(detail.sampleMin)} />
+        <StatBox label="Dias válidos" value={String(detail.totalValid)} />
+        <StatBox label="Amostra (mín. entre janelas)" value={String(detail.sampleMin)} />
         <StatBox label="Momentum" value={MOMENTUM_LABELS[detail.momentumTrend]} />
         <StatBox label="Score" value={`${detail.confidenceScore}/100`} />
         <StatBox
@@ -153,7 +154,7 @@ function ExpandablePatternRow({ item }: { item: MultiPeriodPatternResultSummary 
           <Badge variant={item.direction === "CALL" ? "default" : "secondary"}>{item.direction}</Badge>
         </TableCell>
         <TableCell className="text-right">{formatPercent(item.structuralAverage)}</TableCell>
-        <TableCell className="text-right">{item.sampleMin}</TableCell>
+        <TableCell className="text-right">{item.totalValid}</TableCell>
         <TableCell className="text-right font-semibold">{item.confidenceScore}</TableCell>
         <TableCell>{MOMENTUM_LABELS[item.momentumTrend]}</TableCell>
         <TableCell>
