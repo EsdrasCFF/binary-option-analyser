@@ -69,16 +69,18 @@ function RecommendationBadge({ value }: { value: MultiPeriodRecommendation }) {
 
 function FrequencyBar({ label, pct, sublabel }: { label: string; pct: number; sublabel?: string }) {
   return (
-    <div className="flex items-center gap-2 text-sm">
-      <span className="w-12 shrink-0 text-muted-foreground">{label}</span>
-      <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm">
+      <span className="w-10 shrink-0 text-muted-foreground">{label}</span>
+      <div className="h-2 min-w-16 flex-1 overflow-hidden rounded-full bg-muted">
         <div
           className="h-full rounded-full bg-primary"
           style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
         />
       </div>
-      <span className="w-16 shrink-0 text-right font-medium tabular-nums">{pct.toFixed(2)}%</span>
-      {sublabel && <span className="w-28 shrink-0 text-right text-xs text-muted-foreground">{sublabel}</span>}
+      <span className="w-14 shrink-0 text-right font-medium tabular-nums">{pct.toFixed(2)}%</span>
+      {sublabel && (
+        <span className="ml-12 shrink-0 text-xs text-muted-foreground sm:ml-0 sm:w-28 sm:text-right">{sublabel}</span>
+      )}
     </div>
   );
 }
@@ -221,7 +223,7 @@ export default function MultiPeriodAnalysisDetailPage({ params }: { params: Prom
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{a.name}</h1>
           <p className="text-muted-foreground">
@@ -229,7 +231,9 @@ export default function MultiPeriodAnalysisDetailPage({ params }: { params: Prom
             {a.referenceDate && <> · Referência: {formatDateTime(a.referenceDate)}</>}
           </p>
         </div>
-        <Badge variant={a.status === "error" ? "destructive" : "secondary"}>{formatStatus(a.status)}</Badge>
+        <Badge className="w-fit" variant={a.status === "error" ? "destructive" : "secondary"}>
+          {formatStatus(a.status)}
+        </Badge>
       </div>
 
       {a.status === "error" && a.errorMessage && (

@@ -133,12 +133,12 @@ export default function AnalysisDetailPage({ params }: { params: Promise<{ id: s
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">{a.name}</h1>
           <p className="text-muted-foreground">Criada em {formatDateTime(a.createdAt)}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" variant="outline" onClick={applyLedger}>
             Aplicar gerenciamento
           </Button>
@@ -160,9 +160,9 @@ export default function AnalysisDetailPage({ params }: { params: Promise<{ id: s
         </TabsList>
 
         <TabsContent value="ranking" className="flex flex-col gap-4">
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             {analysisPairs.length > 1 && (
-              <div className="w-56">
+              <div className="w-full sm:w-56">
                 <Select
                   items={{ all: "Todas as divisas", ...Object.fromEntries(analysisPairs.map((p) => [p.id, p.symbol])) }}
                   value={currencyPairId ?? "all"}
@@ -182,7 +182,7 @@ export default function AnalysisDetailPage({ params }: { params: Promise<{ id: s
                 </Select>
               </div>
             )}
-            <div className="w-56">
+            <div className="w-full sm:w-56">
               <Select
                 items={{ all: "Todos os horários", ...DAY_PERIOD_LABELS }}
                 value={period ?? "all"}
