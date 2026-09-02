@@ -480,10 +480,13 @@ export const backtestOperations = pgTable(
 // BankrollLedger + BankrollLedgerEntry
 // (planilha MANUAL de operações — diferente do Backtest: o resultado de cada
 // linha é marcado pelo usuário, não calculado a partir do histórico de
-// candles. Vinculada a UMA análise, mas essa vinculação pode ser trocada
-// depois — os horários disponíveis pra cada entry são sempre os da análise
-// vinculada NO MOMENTO, e cada entry já guarda seu próprio patternResultId,
-// então trocar a análise não afeta o que já foi lançado.)
+// candles. Vinculada a UMA análise (de período único OU Plus — exatamente
+// uma das duas FKs abaixo fica preenchida, validado na API, não no banco),
+// mas essa vinculação pode ser trocada depois — inclusive de um tipo pro
+// outro — os horários disponíveis pra cada entry são sempre os da análise
+// vinculada NO MOMENTO, e cada entry já guarda seu próprio
+// patternResultId/multiPeriodPatternResultId, então trocar a análise não
+// afeta o que já foi lançado.)
 // ---------------------------------------------------------------------------
 
 export const bankrollLedgers = pgTable(
@@ -491,7 +494,11 @@ export const bankrollLedgers = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    analysisId: uuid("analysis_id").notNull().references(() => analyses.id, { onDelete: "cascade" }),
+    // exatamente um dos dois é preenchido — nunca os dois, nunca nenhum.
+    analysisId: uuid("analysis_id").references(() => analyses.id, { onDelete: "cascade" }),
+    multiPeriodAnalysisId: uuid("multi_period_analysis_id").references(() => multiPeriodAnalyses.id, {
+      onDelete: "cascade",
+    }),
     name: varchar("name", { length: 60 }), // opcional, renomeável depois (mesmo padrão do Backtest)
     initialBankroll: numeric("initial_bankroll", { precision: 18, scale: 2 }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -506,9 +513,9 @@ export const bankrollLedgerEntries = pgTable(
     ledgerId: uuid("ledger_id")
       .notNull()
       .references(() => bankrollLedgers.id, { onDelete: "cascade" }),
-    patternResultId: uuid("pattern_result_id")
-      .notNull()
-      .references(() => patternResults.id),
+    // exatamente um dos dois é preenchido, conforme o tipo da análise vinculada ao ledger no momento em que a linha foi criada.
+    patternResultId: uuid("pattern_result_id").references(() => patternResults.id),
+    multiPeriodPatternResultId: uuid("multi_period_pattern_result_id").references(() => multiPeriodPatternResults.id),
     date: timestamp("date", { withTimezone: true }).notNull(), // data pura (meia-noite UTC), mesma convenção de operationDate
     payoutPct: numeric("payout_pct", { precision: 5, scale: 2 }).notNull(),
     entryValue: numeric("entry_value", { precision: 18, scale: 2 }).notNull(),
@@ -692,6 +699,10 @@ export const backtestsRelations = relations(backtests, ({ one, many }) => ({
 export const bankrollLedgersRelations = relations(bankrollLedgers, ({ one, many }) => ({
   user: one(users, { fields: [bankrollLedgers.userId], references: [users.id] }),
   analysis: one(analyses, { fields: [bankrollLedgers.analysisId], references: [analyses.id] }),
+  multiPeriodAnalysis: one(multiPeriodAnalyses, {
+    fields: [bankrollLedgers.multiPeriodAnalysisId],
+    references: [multiPeriodAnalyses.id],
+  }),
   entries: many(bankrollLedgerEntries),
 }));
 
@@ -700,6 +711,10 @@ export const bankrollLedgerEntriesRelations = relations(bankrollLedgerEntries, (
   patternResult: one(patternResults, {
     fields: [bankrollLedgerEntries.patternResultId],
     references: [patternResults.id],
+  }),
+  multiPeriodPatternResult: one(multiPeriodPatternResults, {
+    fields: [bankrollLedgerEntries.multiPeriodPatternResultId],
+    references: [multiPeriodPatternResults.id],
   }),
 }));
 

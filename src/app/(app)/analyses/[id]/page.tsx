@@ -142,7 +142,7 @@ export default function AnalysisDetailPage({ params }: { params: Promise<{ id: s
           <Button size="sm" variant="outline" onClick={applyLedger}>
             Aplicar gerenciamento
           </Button>
-          <LinkLedgerDialog analysisId={id} />
+          <LinkLedgerDialog sourceAnalysisId={id} sourceType="single" />
           <Badge variant={a.status === "error" ? "destructive" : "secondary"}>{formatStatus(a.status)}</Badge>
         </div>
       </div>

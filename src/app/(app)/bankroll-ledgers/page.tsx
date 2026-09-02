@@ -4,6 +4,7 @@ import Link from "next/link";
 import { toast } from "sonner";
 import { useBankrollLedgers, useDeleteBankrollLedger } from "@/lib/api-client/bankroll-ledgers";
 import { ApiClientError } from "@/lib/api-client/http";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -62,7 +63,16 @@ export default function BankrollLedgersPage() {
                     <RenameBankrollLedgerDialog ledgerId={l.id} currentName={l.name} />
                   </div>
                 </TableCell>
-                <TableCell className="text-muted-foreground">{l.analysisName}</TableCell>
+                <TableCell className="text-muted-foreground">
+                  <span className="flex items-center gap-1.5">
+                    {l.analysisName}
+                    {l.analysisType === "plus" && (
+                      <Badge variant="secondary" className="text-[10px]">
+                        Plus
+                      </Badge>
+                    )}
+                  </span>
+                </TableCell>
                 <TableCell className="text-right">{l.totalOperations}</TableCell>
                 <TableCell className="text-right font-medium">{formatCurrency(l.currentBalance)}</TableCell>
                 <TableCell className="text-muted-foreground">{formatDateTime(l.createdAt)}</TableCell>

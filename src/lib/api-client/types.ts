@@ -496,14 +496,18 @@ export interface BacktestOperation {
 /**
  * Gerenciamento de banca MANUAL (planilha) — diferente do Backtest, o
  * resultado de cada linha é marcado pelo usuário, não calculado a partir de
- * candle histórico. Vinculado a UMA análise, mas essa vinculação pode ser
- * trocada depois (ver `UpdateBankrollLedgerInput.analysisId`) sem afetar as
- * linhas já lançadas.
+ * candle histórico. Vinculado a UMA análise — de período único
+ * (`analysisId`) OU Plus (`multiPeriodAnalysisId`), exatamente uma das duas
+ * — mas essa vinculação pode ser trocada depois (inclusive de um tipo pro
+ * outro, ver `UpdateBankrollLedgerInput`) sem afetar as linhas já lançadas.
  */
 export interface BankrollLedger {
   id: string;
   userId: string;
-  analysisId: string;
+  /** Derivado: "plus" quando `multiPeriodAnalysisId` está preenchido, "single" caso contrário. */
+  analysisType: "single" | "plus";
+  analysisId: string | null;
+  multiPeriodAnalysisId: string | null;
   name: string | null;
   initialBankroll: string;
   createdAt: string;
@@ -516,16 +520,22 @@ export interface BankrollLedgerSummary extends BankrollLedger {
 }
 
 export interface BankrollLedgerSlot {
-  id: string; // patternResultId
+  /** patternResultId (type="single") ou multiPeriodPatternResultId (type="plus"). */
+  id: string;
+  type: "single" | "plus";
   symbol: string;
   timeOfDay: string;
   predominantDirection: Direction | null;
+  /** Só preenchido pra slots "plus" — usado pra mostrar/ordenar o TOP 20. */
+  confidenceScore: number | null;
 }
 
 export interface BankrollLedgerEntry {
   id: string;
   ledgerId: string;
-  patternResultId: string;
+  /** Exatamente um dos dois é preenchido, conforme o tipo da análise vinculada quando a linha foi criada. */
+  patternResultId: string | null;
+  multiPeriodPatternResultId: string | null;
   symbol: string;
   timeOfDay: string;
   predominantDirection: Direction | null;
@@ -541,6 +551,7 @@ export interface BankrollLedgerEntry {
 export interface BankrollLedgerDetail {
   ledger: BankrollLedger;
   analysisName: string | null;
+  /** TODOS os horários da análise (período único) ou só o TOP 20 por Confidence Score (Análise Plus). */
   availableSlots: BankrollLedgerSlot[];
   entries: BankrollLedgerEntry[];
   totals: {
@@ -553,7 +564,9 @@ export interface BankrollLedgerDetail {
 }
 
 export interface CreateBankrollLedgerInput {
-  analysisId: string;
+  /** Exatamente um entre analysisId e multiPeriodAnalysisId. */
+  analysisId?: string;
+  multiPeriodAnalysisId?: string;
   name?: string;
   initialBankroll: string;
 }
@@ -561,11 +574,15 @@ export interface CreateBankrollLedgerInput {
 export interface UpdateBankrollLedgerInput {
   name?: string;
   initialBankroll?: string;
+  /** No máximo um entre os dois — informar um deles troca o tipo da análise vinculada e limpa o outro. */
   analysisId?: string;
+  multiPeriodAnalysisId?: string;
 }
 
 export interface CreateBankrollLedgerEntryInput {
-  patternResultId: string;
+  /** Exatamente um entre os dois, conforme o tipo da análise vinculada ao ledger no momento. */
+  patternResultId?: string;
+  multiPeriodPatternResultId?: string;
   date: string;
   payoutPct: string;
   entryValue: string;

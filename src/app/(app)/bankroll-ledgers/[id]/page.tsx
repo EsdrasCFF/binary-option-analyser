@@ -42,6 +42,11 @@ function toDateInputValue(iso: string): string {
   return iso.slice(0, 10);
 }
 
+/** Rótulo do horário no select — inclui o Confidence Score quando o slot vem de uma Análise Plus. */
+function slotLabel(s: BankrollLedgerSlot): string {
+  return s.confidenceScore !== null ? `${s.symbol} ${s.timeOfDay} · ${s.confidenceScore}` : `${s.symbol} ${s.timeOfDay}`;
+}
+
 function LedgerRow({
   entry,
   availableSlots,
@@ -59,21 +64,40 @@ function LedgerRow({
   const [payoutPct, setPayoutPct] = useState(entry.payoutPct);
   const [entryValue, setEntryValue] = useState(entry.entryValue);
 
+  // o tipo da linha é o que ela já tinha ao ser criada — trocar a análise
+  // vinculada depois não migra as linhas existentes pro outro tipo.
+  const entryType: "single" | "plus" = entry.multiPeriodPatternResultId ? "plus" : "single";
+  const entrySlotId = entry.patternResultId ?? entry.multiPeriodPatternResultId ?? "";
+
+  // só faz sentido escolher entre horários do MESMO tipo da linha — trocar
+  // de análise de período único pra Plus (ou vice-versa) muda o menu de
+  // opções pra linhas NOVAS, não para as já lançadas.
+  const slotsOfSameType = availableSlots.filter((s) => s.type === entryType);
+
   // a linha pode ter sido lançada com um horário de uma análise que já não é
   // mais a vinculada (o ledger pode ter sido re-vinculado depois) — nesse
   // caso o horário não está em `availableSlots`, então incluímos a própria
   // opção da linha na lista pra o select continuar mostrando o rótulo certo.
-  const slotOptions = availableSlots.some((s) => s.id === entry.patternResultId)
-    ? availableSlots
+  const slotOptions = slotsOfSameType.some((s) => s.id === entrySlotId)
+    ? slotsOfSameType
     : [
         {
-          id: entry.patternResultId,
+          id: entrySlotId,
+          type: entryType,
           symbol: entry.symbol,
           timeOfDay: entry.timeOfDay,
           predominantDirection: entry.predominantDirection,
+          confidenceScore: null,
         },
-        ...availableSlots,
+        ...slotsOfSameType,
       ];
+
+  function handleSlotChange(id: string) {
+    onUpdate(
+      entry.id,
+      entryType === "plus" ? { multiPeriodPatternResultId: id } : { patternResultId: id }
+    );
+  }
 
   return (
     <TableRow>
@@ -90,17 +114,17 @@ function LedgerRow({
       </TableCell>
       <TableCell>
         <Select<string>
-          items={Object.fromEntries(slotOptions.map((s) => [s.id, `${s.symbol} ${s.timeOfDay}`]))}
-          value={entry.patternResultId}
-          onValueChange={(v) => v && onUpdate(entry.id, { patternResultId: v })}
+          items={Object.fromEntries(slotOptions.map((s) => [s.id, slotLabel(s)]))}
+          value={entrySlotId}
+          onValueChange={(v) => v && handleSlotChange(v)}
         >
-          <SelectTrigger className="w-40">
+          <SelectTrigger className="w-44">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             {slotOptions.map((s) => (
               <SelectItem key={s.id} value={s.id}>
-                {s.symbol} {s.timeOfDay}
+                {slotLabel(s)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -188,11 +212,12 @@ export default function BankrollLedgerDetailPage({ params }: { params: Promise<{
 
   function handleAddEntry() {
     if (availableSlots.length === 0) return;
+    const firstSlot = availableSlots[0];
     const today = new Date();
     const todayIso = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate())).toISOString();
     createEntry.mutate(
       {
-        patternResultId: availableSlots[0].id,
+        ...(firstSlot.type === "plus" ? { multiPeriodPatternResultId: firstSlot.id } : { patternResultId: firstSlot.id }),
         date: todayIso,
         payoutPct: "85",
         entryValue: "5",
@@ -231,10 +256,20 @@ export default function BankrollLedgerDetailPage({ params }: { params: Promise<{
             <RenameBankrollLedgerDialog ledgerId={l.id} currentName={l.name} />
           </div>
           <div className="flex items-center gap-1 text-muted-foreground">
-            <p>
-              Análise: {analysisName} · Criado em {formatDateTime(l.createdAt)}
+            <p className="flex items-center gap-1.5">
+              Análise: {analysisName}
+              {l.analysisType === "plus" && (
+                <Badge variant="secondary" className="text-[10px]">
+                  Plus
+                </Badge>
+              )}
+              · Criado em {formatDateTime(l.createdAt)}
             </p>
-            <LinkAnalysisDialog ledgerId={l.id} currentAnalysisId={l.analysisId} />
+            <LinkAnalysisDialog
+              ledgerId={l.id}
+              currentAnalysisId={l.analysisId}
+              currentMultiPeriodAnalysisId={l.multiPeriodAnalysisId}
+            />
           </div>
         </div>
       </div>

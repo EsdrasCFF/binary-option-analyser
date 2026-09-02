@@ -17,6 +17,8 @@ export default function NewBankrollLedgerPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const analysisId = searchParams.get("analysisId") ?? "";
+  const multiPeriodAnalysisId = searchParams.get("multiPeriodAnalysisId") ?? "";
+  const isPlus = !!multiPeriodAnalysisId;
 
   const [name, setName] = useState("");
   const [initialBankroll, setInitialBankroll] = useState("1000");
@@ -32,7 +34,7 @@ export default function NewBankrollLedgerPage() {
     }
     createLedger.mutate(
       {
-        analysisId,
+        ...(isPlus ? { multiPeriodAnalysisId } : { analysisId }),
         name: name.trim() || undefined,
         initialBankroll,
       },
@@ -48,7 +50,7 @@ export default function NewBankrollLedgerPage() {
     );
   }
 
-  if (!analysisId) {
+  if (!analysisId && !multiPeriodAnalysisId) {
     return (
       <div className="max-w-2xl">
         <Alert>
@@ -59,7 +61,11 @@ export default function NewBankrollLedgerPage() {
             <Link href="/analyses" className="underline underline-offset-4">
               análise
             </Link>{" "}
-            e clique em &quot;Aplicar gerenciamento&quot;.
+            (ou uma{" "}
+            <Link href="/analyses-plus" className="underline underline-offset-4">
+              Análise Plus
+            </Link>
+            ) e clique em &quot;Aplicar gerenciamento&quot;.
           </AlertDescription>
         </Alert>
       </div>
@@ -71,7 +77,9 @@ export default function NewBankrollLedgerPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Novo gerenciamento de banca</h1>
         <p className="text-muted-foreground">
-          Todos os horários da análise vão ficar disponíveis pra escolher em cada linha da planilha.
+          {isPlus
+            ? "Os 20 horários com maior Confidence Score da Análise Plus vão ficar disponíveis pra escolher em cada linha da planilha."
+            : "Todos os horários da análise vão ficar disponíveis pra escolher em cada linha da planilha."}
         </p>
       </div>
 

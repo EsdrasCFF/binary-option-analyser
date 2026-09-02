@@ -1,6 +1,11 @@
 /**
  * PATCH  /api/bankroll-ledgers/:id/entries/:entryId — edita uma linha
  *        (campos parciais); recalcula `profitLoss` com os valores finais.
+ *        Trocar o horário (`patternResultId`/`multiPeriodPatternResultId`)
+ *        só é permitido pro MESMO tipo que a linha já tinha (não dá pra
+ *        misturar as duas FKs numa linha só só editando o horário — pra
+ *        mudar de tipo, o usuário troca a análise vinculada e adiciona uma
+ *        linha nova).
  * DELETE /api/bankroll-ledgers/:id/entries/:entryId — remove uma linha.
  */
 import { NextRequest, NextResponse } from "next/server";
@@ -8,20 +13,25 @@ import { Decimal } from "decimal.js";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db/client";
-import { bankrollLedgerEntries, bankrollLedgers, patternResults } from "@/db/schema";
+import { bankrollLedgerEntries, bankrollLedgers, multiPeriodPatternResults, patternResults } from "@/db/schema";
 import { requireUserId } from "@/lib/api/current-user";
 import { ApiError, decimalString, handleErrors, isUuid, isoDateTimeString, parseJsonBody, uuidString } from "@/lib/api/http";
 import { computeEntryProfitLoss } from "@/lib/core/bankroll-ledger";
 
 type RouteContext = { params: Promise<{ id: string; entryId: string }> };
 
-const patchBodySchema = z.object({
-  patternResultId: uuidString.optional(),
-  date: isoDateTimeString.optional(),
-  payoutPct: decimalString.optional(),
-  entryValue: decimalString.optional(),
-  result: z.enum(["win", "loss", "tie"]).optional(),
-});
+const patchBodySchema = z
+  .object({
+    patternResultId: uuidString.optional(),
+    multiPeriodPatternResultId: uuidString.optional(),
+    date: isoDateTimeString.optional(),
+    payoutPct: decimalString.optional(),
+    entryValue: decimalString.optional(),
+    result: z.enum(["win", "loss", "tie"]).optional(),
+  })
+  .refine((v) => !(v.patternResultId !== undefined && v.multiPeriodPatternResultId !== undefined), {
+    message: "Informe no máximo um entre patternResultId e multiPeriodPatternResultId.",
+  });
 
 async function loadOwnedLedgerAndEntry(ledgerId: string, entryId: string) {
   const userId = await requireUserId();
@@ -50,15 +60,43 @@ export async function PATCH(req: NextRequest, ctx: RouteContext) {
     const { ledger, entry } = await loadOwnedLedgerAndEntry(id, entryId);
     const body = await parseJsonBody(req, patchBodySchema);
 
+    // a linha é do tipo que ela já era (patternResultId ou
+    // multiPeriodPatternResultId, o que já tiver preenchido) — trocar o
+    // horário dentro do mesmo tipo é permitido, mudar de tipo numa linha
+    // existente não (o ledger pode ter sido revinculado depois que essa
+    // linha foi criada).
+    if (body.multiPeriodPatternResultId !== undefined) {
+      if (!entry.multiPeriodPatternResultId) {
+        throw new ApiError("Esta linha é de uma análise de período único — não é possível trocar pra um horário de Análise Plus.", 422);
+      }
+      if (!ledger.multiPeriodAnalysisId) {
+        throw new ApiError("O gerenciamento não está mais vinculado a uma Análise Plus.", 422);
+      }
+      const [pattern] = await db
+        .select({ id: multiPeriodPatternResults.id })
+        .from(multiPeriodPatternResults)
+        .where(
+          and(
+            eq(multiPeriodPatternResults.id, body.multiPeriodPatternResultId),
+            eq(multiPeriodPatternResults.analysisId, ledger.multiPeriodAnalysisId)
+          )
+        )
+        .limit(1);
+      if (!pattern) throw new ApiError("Esse horário não pertence à Análise Plus vinculada a este gerenciamento.", 422);
+    }
     if (body.patternResultId !== undefined) {
+      if (!entry.patternResultId) {
+        throw new ApiError("Esta linha é de uma Análise Plus — não é possível trocar pra um horário de período único.", 422);
+      }
+      if (!ledger.analysisId) {
+        throw new ApiError("O gerenciamento não está mais vinculado a uma análise de período único.", 422);
+      }
       const [pattern] = await db
         .select({ id: patternResults.id })
         .from(patternResults)
         .where(and(eq(patternResults.id, body.patternResultId), eq(patternResults.analysisId, ledger.analysisId)))
         .limit(1);
-      if (!pattern) {
-        throw new ApiError("Esse horário não pertence à análise vinculada a este gerenciamento.", 422);
-      }
+      if (!pattern) throw new ApiError("Esse horário não pertence à análise vinculada a este gerenciamento.", 422);
     }
     if (body.entryValue !== undefined && Number(body.entryValue) <= 0) {
       throw new ApiError("entryValue deve ser maior que zero.", 422);
@@ -77,6 +115,9 @@ export async function PATCH(req: NextRequest, ctx: RouteContext) {
       .update(bankrollLedgerEntries)
       .set({
         ...(body.patternResultId !== undefined ? { patternResultId: body.patternResultId } : {}),
+        ...(body.multiPeriodPatternResultId !== undefined
+          ? { multiPeriodPatternResultId: body.multiPeriodPatternResultId }
+          : {}),
         ...(body.date !== undefined ? { date: new Date(body.date) } : {}),
         payoutPct: finalPayoutPct,
         entryValue: finalEntryValue,

@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { useBankrollLedgers, useUpdateBankrollLedger } from "@/lib/api-client/bankroll-ledgers";
 import { ApiClientError } from "@/lib/api-client/http";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
@@ -18,12 +19,18 @@ import {
 import { Link2 } from "lucide-react";
 
 /**
- * Diálogo aberto a partir de uma análise, pra vincular (ou trocar a
- * vinculação de) um gerenciamento de banca JÁ EXISTENTE a esta análise — os
- * horários disponíveis nele passam a ser os desta análise, mas as linhas já
- * lançadas continuam intactas.
+ * Diálogo aberto a partir de uma análise (de período único OU Plus), pra
+ * vincular (ou trocar a vinculação de) um gerenciamento de banca JÁ
+ * EXISTENTE a esta análise — os horários disponíveis nele passam a ser os
+ * desta análise, mas as linhas já lançadas continuam intactas.
  */
-export function LinkLedgerDialog({ analysisId }: { analysisId: string }) {
+export function LinkLedgerDialog({
+  sourceAnalysisId,
+  sourceType,
+}: {
+  sourceAnalysisId: string;
+  sourceType: "single" | "plus";
+}) {
   const [open, setOpen] = useState(false);
   const router = useRouter();
   const ledgers = useBankrollLedgers();
@@ -55,7 +62,9 @@ export function LinkLedgerDialog({ analysisId }: { analysisId: string }) {
                 ledgerId={l.id}
                 name={l.name}
                 analysisName={l.analysisName}
-                analysisId={analysisId}
+                analysisType={l.analysisType}
+                sourceAnalysisId={sourceAnalysisId}
+                sourceType={sourceType}
                 onLinked={() => {
                   setOpen(false);
                   router.push(`/bankroll-ledgers/${l.id}`);
@@ -73,20 +82,24 @@ function LedgerOption({
   ledgerId,
   name,
   analysisName,
-  analysisId,
+  analysisType,
+  sourceAnalysisId,
+  sourceType,
   onLinked,
 }: {
   ledgerId: string;
   name: string | null;
   analysisName: string;
-  analysisId: string;
+  analysisType: "single" | "plus";
+  sourceAnalysisId: string;
+  sourceType: "single" | "plus";
   onLinked: () => void;
 }) {
   const updateLedger = useUpdateBankrollLedger(ledgerId);
 
   function handleClick() {
     updateLedger.mutate(
-      { analysisId },
+      sourceType === "plus" ? { multiPeriodAnalysisId: sourceAnalysisId } : { analysisId: sourceAnalysisId },
       {
         onSuccess: () => {
           toast.success("Gerenciamento vinculado a esta análise.");
@@ -105,7 +118,14 @@ function LedgerOption({
       onClick={handleClick}
     >
       <div className="flex flex-col items-start">
-        <span className="font-medium">{name ?? "Sem nome"}</span>
+        <span className="flex items-center gap-1.5 font-medium">
+          {name ?? "Sem nome"}
+          {analysisType === "plus" && (
+            <Badge variant="secondary" className="text-[10px]">
+              Plus
+            </Badge>
+          )}
+        </span>
         <span className="text-xs text-muted-foreground">Atualmente: {analysisName}</span>
       </div>
     </Button>

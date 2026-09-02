@@ -1,6 +1,7 @@
 "use client";
 
 import { use, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   useMultiPeriodAnalysis,
   useMultiPeriodPatternResult,
@@ -15,11 +16,13 @@ import {
   MultiPeriodRecommendation,
 } from "@/lib/api-client/types";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatDateTime, formatPercent, formatStatus } from "@/lib/format";
+import { LinkLedgerDialog } from "@/components/link-ledger-dialog";
 import { ChevronDown, ChevronRight } from "lucide-react";
 
 const CLASSIFICATION_LABELS: Record<MultiPeriodClassification, string> = {
@@ -205,6 +208,7 @@ function TopPatternCard({ rank, item }: { rank: number; item: MultiPeriodPattern
 
 export default function MultiPeriodAnalysisDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const router = useRouter();
   const analysis = useMultiPeriodAnalysis(id);
   const top5 = useMultiPeriodTop5(id);
   const patternResults = useMultiPeriodPatternResults({ analysisId: id, sortBy: "confidenceScore", order: "desc", limit: 200 });
@@ -213,6 +217,10 @@ export default function MultiPeriodAnalysisDetailPage({ params }: { params: Prom
   if (!analysis.data) return <p className="text-sm text-destructive">Análise não encontrada.</p>;
 
   const { analysis: a, configuration, patternResultCount } = analysis.data;
+
+  function applyLedger() {
+    router.push(`/bankroll-ledgers/new?multiPeriodAnalysisId=${id}`);
+  }
 
   // mesmo cálculo do motor (referenceDate - maxDays dias) — só pra exibição,
   // não afeta nada do processamento em si.
@@ -231,9 +239,15 @@ export default function MultiPeriodAnalysisDetailPage({ params }: { params: Prom
             {a.referenceDate && <> · Referência: {formatDateTime(a.referenceDate)}</>}
           </p>
         </div>
-        <Badge className="w-fit" variant={a.status === "error" ? "destructive" : "secondary"}>
-          {formatStatus(a.status)}
-        </Badge>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" variant="outline" onClick={applyLedger}>
+            Aplicar gerenciamento
+          </Button>
+          <LinkLedgerDialog sourceAnalysisId={id} sourceType="plus" />
+          <Badge className="w-fit" variant={a.status === "error" ? "destructive" : "secondary"}>
+            {formatStatus(a.status)}
+          </Badge>
+        </div>
       </div>
 
       {a.status === "error" && a.errorMessage && (
