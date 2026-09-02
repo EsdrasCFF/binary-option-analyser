@@ -45,6 +45,13 @@ export interface StructuralQualityConfig {
   fullDirectionSlopePctPer10d: Decimal;
 }
 
+export interface StructuralEvidenceConfig {
+  /** Score "neutro" (0-20) usado quando a evidência estrutural é fraca/inexistente — valor fixo com 1 janela, e ponto de referência do shrinkage com 2 janelas. */
+  neutralScore: Decimal;
+  /** Com EXATAMENTE 2 janelas, fração do score bruto que "sobrevive" ao invés de ser puxada pro neutro (0 = totalmente neutro, 1 = sem redução). Só se aplica a 2 janelas — com 3+ não há redução nenhuma. */
+  twoWindowReliability: Decimal;
+}
+
 export interface SampleAnchor {
   /** Amostra mínima (menor validSamples entre as janelas estruturais). */
   sample: number;
@@ -74,6 +81,17 @@ export interface ScoringConfig {
    * diagnóstico, mas não determinam mais o score diretamente.
    */
   structuralQuality: StructuralQualityConfig;
+
+  /**
+   * Confiabilidade da evidência estrutural conforme a quantidade de janelas
+   * disponíveis. Com poucas janelas a regressão de `structuralQuality` fica
+   * matematicamente "perfeita demais" pra ser confiável (2 pontos sempre
+   * caem exatamente numa reta: RMSE=0, R²=1 por construção, sem isso ser
+   * evidência real de trajetória coerente) — por isso o score bruto é
+   * aproximado do neutro conforme as janelas somem. NÃO afeta o cálculo em
+   * si (regressão/RMSE/R²/pesos 14+6) quando há 3 ou mais janelas.
+   */
+  structuralEvidence: StructuralEvidenceConfig;
 
   /** Pontos-âncora pra interpolação linear do score de amostra (seção 8). */
   sampleAnchors: SampleAnchor[];
@@ -117,6 +135,11 @@ export const DEFAULT_SCORING_CONFIG: ScoringConfig = {
     rmseScalePct: new Decimal("2.5"),
     neutralSlopePctPer10d: new Decimal("0.5"),
     fullDirectionSlopePctPer10d: new Decimal("1.5"),
+  },
+
+  structuralEvidence: {
+    neutralScore: new Decimal(10),
+    twoWindowReliability: new Decimal("0.5"),
   },
 
   sampleAnchors: [
@@ -302,20 +325,31 @@ export function computeStructuralQualityScore(
   windows: StructuralWindowFrequency[],
   config: ScoringConfig = DEFAULT_SCORING_CONFIG
 ): StructuralQualityResult {
-  const regression = computeStructuralRegression(windows);
   const { coherence: maxCoherence, direction: maxDirection } = STABILITY_SUB_WEIGHTS;
+  const { neutralScore, twoWindowReliability } = config.structuralEvidence;
+  // "Neutro" de cada subcomponente, proporcional ao peso 14:6 do E20 — soma
+  // sempre exatamente `neutralScore`, e é o ponto de referência tanto pro
+  // caso fixo de 1 janela quanto pro shrinkage de 2 janelas (mantém a soma
+  // coherenceScore+directionScore sempre igual a stabilityScore).
+  const neutralCoherence = neutralScore.mul(maxCoherence).div(MAX_WEIGHTS.stability);
+  const neutralDirection = neutralScore.mul(maxDirection).div(MAX_WEIGHTS.stability);
 
-  if (!regression) {
-    // Menos de 2 janelas estruturais: não existe regressão utilizável, ou
-    // seja, não há nenhuma evidência de trajetória incoerente NEM de direção
-    // (favorável ou desfavorável) — decisão: não penalizar por falta de
-    // evidência (mesmo espírito de outros pontos do motor, ex: persistência
-    // com poucas janelas), dando os 20 pontos cheios.
-    const coherenceScore = new Decimal(maxCoherence);
-    const directionScore = new Decimal(maxDirection);
-    return { regression: null, coherenceScore, directionScore, stabilityScore: coherenceScore.plus(directionScore) };
+  if (windows.length === 0) {
+    // 0 janelas: sem NENHUMA informação estrutural — nem nível, nem trajetória.
+    return { regression: null, coherenceScore: new Decimal(0), directionScore: new Decimal(0), stabilityScore: new Decimal(0) };
   }
 
+  if (windows.length === 1) {
+    // 1 janela: sabemos o nível, mas não existe trajetória pra avaliar — sem
+    // regressão real (não inventamos slope/RMSE/R² com um único ponto).
+    // Score fixo no neutro, dividido proporcionalmente entre os dois
+    // subcomponentes (soma = neutralScore).
+    return { regression: null, coherenceScore: neutralCoherence, directionScore: neutralDirection, stabilityScore: neutralScore };
+  }
+
+  // windows.length >= 2 -> regressão de verdade. Matemática de
+  // coerência/direção IDÊNTICA à já aprovada, sem nenhuma alteração.
+  const regression = computeStructuralRegression(windows)!;
   const { rmseScalePct, neutralSlopePctPer10d, fullDirectionSlopePctPer10d } = config.structuralQuality;
 
   // A) COERÊNCIA DA TRAJETÓRIA — RMSE baixo (pontos acompanham bem uma reta,
@@ -323,7 +357,7 @@ export function computeStructuralQualityScore(
   // (errático, sem trajetória coerente) pontua baixo. Decaimento exponencial:
   // coherenceScore = 14 * exp(-((rmse / rmseScalePct) ^ 2)).
   const rmseRatio = regression.rmse.div(rmseScalePct);
-  const coherenceScore = clampDecimal(
+  const rawCoherenceScore = clampDecimal(
     rmseRatio.pow(2).neg().exp().mul(maxCoherence),
     new Decimal(0),
     new Decimal(maxCoherence)
@@ -333,16 +367,16 @@ export function computeStructuralQualityScore(
   // bruta total entre primeira e última janela), pra funcionar igual em
   // janelas de 70D e de 100D.
   const absSlope = regression.slope.abs();
-  let directionScore: Decimal;
+  let rawDirectionScore: Decimal;
   if (absSlope.lte(neutralSlopePctPer10d)) {
     // trajetória praticamente horizontal (zona neutra) — não penaliza.
-    directionScore = new Decimal(maxDirection);
+    rawDirectionScore = new Decimal(maxDirection);
   } else if (regression.slope.gt(0)) {
     // fortalecimento: a organização da trajetória já foi avaliada pela
     // coerência acima — aqui só reduz um pouco a confiança quando R² é
     // baixo, sem duplicar a penalização já aplicada pelo RMSE.
     const positiveDirectionConfidence = new Decimal("0.75").plus(regression.rSquared.mul("0.25"));
-    directionScore = positiveDirectionConfidence.mul(maxDirection);
+    rawDirectionScore = positiveDirectionConfidence.mul(maxDirection);
   } else {
     // enfraquecimento: penaliza gradualmente conforme a severidade da queda
     // (slope) E a confiança de que essa queda é estruturalmente real (R²) —
@@ -354,9 +388,18 @@ export function computeStructuralQualityScore(
       new Decimal(1)
     );
     const directionPenalty = severity.mul(regression.rSquared);
-    directionScore = new Decimal(maxDirection).mul(new Decimal(1).minus(directionPenalty));
+    rawDirectionScore = new Decimal(maxDirection).mul(new Decimal(1).minus(directionPenalty));
   }
-  directionScore = clampDecimal(directionScore, new Decimal(0), new Decimal(maxDirection));
+  rawDirectionScore = clampDecimal(rawDirectionScore, new Decimal(0), new Decimal(maxDirection));
+
+  // Com EXATAMENTE 2 janelas, qualquer reta passa perfeitamente pelos 2
+  // pontos (RMSE=0, R²=1 por construção) — isso não é evidência real de
+  // trajetória coerente, só a ilusão de uma. Aproxima o score bruto do
+  // neutro em `twoWindowReliability` (0.5 por padrão); com 3+ janelas
+  // `reliability=1` e o resultado é idêntico ao bruto, sem nenhuma redução.
+  const reliability = windows.length === 2 ? twoWindowReliability : new Decimal(1);
+  const coherenceScore = neutralCoherence.plus(rawCoherenceScore.minus(neutralCoherence).mul(reliability));
+  const directionScore = neutralDirection.plus(rawDirectionScore.minus(neutralDirection).mul(reliability));
 
   const stabilityScore = clampDecimal(
     coherenceScore.plus(directionScore),

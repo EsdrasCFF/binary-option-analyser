@@ -124,14 +124,12 @@ describe("computeStabilityScore (seção 7) — agora via regressão, não mais 
     expect(result.score.toNumber()).toBeCloseTo(13.63, 1);
   });
 
-  it("com só 2 janelas, a reta sempre passa exatamente pelos 2 pontos (RMSE=0, coerência máxima) — quem penaliza é só a direção", () => {
-    // Ambos os exemplos têm |slope| bem acima do teto de severidade máxima
-    // (fullDirectionSlopePctPer10d=1.5), então os dois ficam com direção
-    // zerada e coerência no teto — 14/20 pros dois, mesmo com magnitudes de
-    // queda diferentes (a diferença deixa de importar depois que a queda já
-    // é "severa o bastante" pra zerar a confiança na direção).
-    expect(computeStabilityScore(windows([[70, 80, 30], [50, 75.5, 30]])).score.toNumber()).toBeCloseTo(14, 1);
-    expect(computeStabilityScore(windows([[70, 80, 30], [50, 73, 30]])).score.toNumber()).toBeCloseTo(14, 1);
+  it("com só 2 janelas, o score bruto (14 coerência + 0 direção, ambas quedas severas o bastante) é puxado 50% em direção ao neutro (10) — ver seção de confiabilidade estrutural mais abaixo", () => {
+    // rawStabilityScore=14 (coerência no teto, já que 2 pontos sempre caem
+    // exatamente numa reta; direção zerada, já que |slope| passa do teto de
+    // severidade máxima nos dois casos) -> 10 + ((14-10)*0.5) = 12.
+    expect(computeStabilityScore(windows([[70, 80, 30], [50, 75.5, 30]])).score.toNumber()).toBeCloseTo(12, 1);
+    expect(computeStabilityScore(windows([[70, 80, 30], [50, 73, 30]])).score.toNumber()).toBeCloseTo(12, 1);
   });
 });
 
@@ -163,12 +161,6 @@ describe("computeStructuralRegression — regressão linear no eixo normalizado 
 describe("computeStructuralQualityScore — coerência (14) + direção (6) = estabilidade (20)", () => {
   it("os pesos internos da estabilidade somam exatamente 20", () => {
     expect(STABILITY_SUB_WEIGHTS.coherence + STABILITY_SUB_WEIGHTS.direction).toBe(MAX_WEIGHTS.stability);
-  });
-
-  it("sem janelas suficientes pra regressão (1 janela), não penaliza por falta de evidência — 20/20", () => {
-    const result = computeStructuralQualityScore(windows([[50, 81, 32]]));
-    expect(result.regression).toBeNull();
-    expect(result.stabilityScore.toNumber()).toBe(20);
   });
 
   describe("casos reais (seção 23 do briefing)", () => {
@@ -281,6 +273,97 @@ describe("computeStructuralQualityScore — coerência (14) + direção (6) = es
     expect(computeStructuralQualityScore(windowsFrom([80, 79, 78], 70)).directionScore.toNumber()).toBeCloseTo(3, 1);
     // -1.5, R²=1 -> severity=1, penalty=1 -> 0.
     expect(computeStructuralQualityScore(windowsFrom([81, 79.5, 78], 70)).directionScore.toNumber()).toBeCloseTo(0, 1);
+  });
+});
+
+describe("confiabilidade da evidência estrutural (poucas janelas)", () => {
+  it("1 — zero structuralWindows => E = 0", () => {
+    const result = computeStructuralQualityScore([]);
+    expect(result.regression).toBeNull();
+    expect(result.coherenceScore.toNumber()).toBe(0);
+    expect(result.directionScore.toNumber()).toBe(0);
+    expect(result.stabilityScore.toNumber()).toBe(0);
+  });
+
+  it("2 — uma structuralWindow => E = 10, regression = null (não inventa slope/RMSE/R²)", () => {
+    const result = computeStructuralQualityScore(windows([[50, 80, 32]]));
+    expect(result.regression).toBeNull();
+    expect(result.stabilityScore.toNumber()).toBe(10);
+    // subtotais mantêm a proporção 14:6 do E20, escalada pro neutro (soma = 10).
+    expect(result.coherenceScore.toNumber()).toBeCloseTo(7, 6);
+    expect(result.directionScore.toNumber()).toBeCloseTo(3, 6);
+  });
+
+  it("3 — duas janelas idênticas (80,80): rawE=20 (coerência 14 + direção 6, zona neutra) => finalE=15", () => {
+    const w = windows([[60, 80, 30], [50, 80, 30]]);
+    const raw = computeStructuralRegression(w)!;
+    expect(raw.rmse.toNumber()).toBe(0);
+    expect(raw.rSquared.toNumber()).toBe(1); // série constante
+    const result = computeStructuralQualityScore(w);
+    expect(result.stabilityScore.toNumber()).toBeCloseTo(15, 6); // 10 + ((20-10)*0.5)
+  });
+
+  it("4 — duas janelas fortalecendo (78,80): finalE < rawE (=20, teto) e finalE > 10 (neutro)", () => {
+    const w = windows([[60, 78, 30], [50, 80, 30]]);
+    const result = computeStructuralQualityScore(w);
+    const rawE = result.regression ? STABILITY_SUB_WEIGHTS.coherence + STABILITY_SUB_WEIGHTS.direction : null; // 2 pontos -> sempre R²=1, RMSE=0, slope>0 -> raw = 14+6 = 20
+    expect(rawE).toBe(20);
+    expect(result.stabilityScore.toNumber()).toBeLessThan(20);
+    expect(result.stabilityScore.toNumber()).toBeGreaterThan(10);
+    expect(result.stabilityScore.toNumber()).toBeCloseTo(15, 6);
+  });
+
+  it("5 — duas janelas enfraquecendo moderadamente (80,79): aplica exatamente a fórmula de shrinkage sobre o rawE calculado", () => {
+    const w = windows([[60, 80, 30], [50, 79, 30]]);
+    const raw = computeStructuralRegression(w)!;
+    expect(raw.slope.toNumber()).toBeCloseTo(-1, 6); // 1 p.p. de queda em 1 passo de 10 dias
+    // rawCoherence = 14 (RMSE=0, 2 pontos). rawDirection: severity=(1-0.5)/(1.5-0.5)=0.5, R²=1 -> penalty=0.5 -> 6*0.5=3. rawE=17.
+    const rawE = 14 + 3;
+    const expectedFinalE = 10 + (rawE - 10) * 0.5;
+    const result = computeStructuralQualityScore(w);
+    expect(result.stabilityScore.toNumber()).toBeCloseTo(expectedFinalE, 6);
+  });
+
+  it("duas janelas enfraquecendo fortemente (82,79): mesma fórmula, severity satura em 1 -> rawDirection=0", () => {
+    const w = windows([[60, 82, 30], [50, 79, 30]]);
+    const rawE = 14 + 0; // severity=1 (|slope|=3 >> 1.5), R²=1 -> penalty=1 -> direction=0
+    const expectedFinalE = 10 + (rawE - 10) * 0.5;
+    const result = computeStructuralQualityScore(w);
+    expect(result.stabilityScore.toNumber()).toBeCloseTo(expectedFinalE, 6);
+  });
+
+  it("6 — três janelas: confirma que NÃO existe shrinkage (reliability=1, resultado idêntico ao bruto)", () => {
+    // Mesmo slope/R² do teste de 2 janelas "enfraquecendo moderadamente"
+    // acima, mas com uma 3ª janela mantendo a mesma reta perfeita — o
+    // resultado deve ser o rawE cheio (17), sem qualquer redução.
+    const w = windows([[70, 81, 30], [60, 80, 30], [50, 79, 30]]);
+    const result = computeStructuralQualityScore(w);
+    expect(result.regression!.rSquared.toNumber()).toBeCloseTo(1, 6);
+    expect(result.stabilityScore.toNumber()).toBeCloseTo(17, 1); // 14 (coerência) + 3 (direção) — igual ao rawE, sem shrinkage
+  });
+
+  it("7 — os testes históricos de 70D (80,79,78) e 100D (83..78) continuam em E=17, sem alteração (3+ janelas)", () => {
+    const result70d = computeStructuralQualityScore(windowsFrom([80, 79, 78], 70));
+    const result100d = computeStructuralQualityScore(windowsFrom([83, 82, 81, 80, 79, 78], 100));
+    expect(result70d.stabilityScore.toNumber()).toBeCloseTo(17, 6);
+    expect(result100d.stabilityScore.toNumber()).toBeCloseTo(17, 6);
+  });
+
+  it("os subtotais (coherenceScore + directionScore) sempre somam exatamente stabilityScore, em qualquer quantidade de janelas", () => {
+    const scenarios: StructuralWindowFrequency[][] = [
+      [],
+      windows([[50, 80, 30]]),
+      windows([[60, 80, 30], [50, 80, 30]]),
+      windows([[60, 78, 30], [50, 80, 30]]),
+      windows([[70, 81, 30], [60, 80, 30], [50, 79, 30]]),
+      windowsFrom([74, 76, 79, 82, 85, 88], 100),
+    ];
+    for (const w of scenarios) {
+      const result = computeStructuralQualityScore(w);
+      expect(result.coherenceScore.plus(result.directionScore).toNumber()).toBeCloseTo(result.stabilityScore.toNumber(), 6);
+      expect(result.stabilityScore.gte(0)).toBe(true);
+      expect(result.stabilityScore.lte(MAX_WEIGHTS.stability)).toBe(true);
+    }
   });
 });
 
