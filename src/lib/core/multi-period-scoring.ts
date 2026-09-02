@@ -32,10 +32,17 @@ export type Recommendation = "a_favor" | "contra" | "observar" | "descartar";
 export type MomentumTrend = "fortalecendo" | "estavel" | "enfraquecendo" | "possivel_inversao";
 export type InversionState = "none" | "possible" | "confirmed";
 
-export interface StabilityBand {
-  /** Banda se aplica quando o range (max-min) for <= este valor (a última banda, sem teto, usa null). */
-  maxRange: number | null;
-  score: number;
+export interface StructuralQualityConfig {
+  /**
+   * Escala do RMSE (p.p.) no decaimento exponencial da coerência — seção C
+   * (COERÊNCIA DA TRAJETÓRIA). rmse=0 -> score máximo; rmse=rmseScalePct ->
+   * score cai pra ~37% do máximo (1/e); rmse alto -> score próximo de 0.
+   */
+  rmseScalePct: Decimal;
+  /** |slope| (p.p. por passo de 10 dias) até este valor é tratado como trajetória horizontal — nem fortalecendo nem enfraquecendo, não penaliza. */
+  neutralSlopePctPer10d: Decimal;
+  /** |slope| a partir deste valor já representa a severidade MÁXIMA de enfraquecimento (severity=1). */
+  fullDirectionSlopePctPer10d: Decimal;
 }
 
 export interface SampleAnchor {
@@ -57,8 +64,16 @@ export interface ScoringConfig {
   frequencyNormalizationFloorPct: Decimal;
   frequencyNormalizationRangePct: Decimal;
 
-  /** Bandas de estabilidade por range (seção 7), da mais estrita pra mais frouxa. */
-  stabilityBands: StabilityBand[];
+  /**
+   * ESTABILIDADE (20 pontos no total, seção 7) responde "as frequências das
+   * janelas estruturais formam uma trajetória coerente?" — via regressão
+   * linear sobre as janelas (`computeStructuralRegression`), dividida em:
+   *   A) coerência da trajetória (RMSE dos resíduos) -> até 14 pontos
+   *   B) direção estrutural (slope por passo de 10 dias + R²) -> até 6 pontos
+   * Range e desvio padrão continuam calculados e retornados pra exibição/
+   * diagnóstico, mas não determinam mais o score diretamente.
+   */
+  structuralQuality: StructuralQualityConfig;
 
   /** Pontos-âncora pra interpolação linear do score de amostra (seção 8). */
   sampleAnchors: SampleAnchor[];
@@ -98,14 +113,11 @@ export const DEFAULT_SCORING_CONFIG: ScoringConfig = {
   frequencyNormalizationFloorPct: new Decimal(50),
   frequencyNormalizationRangePct: new Decimal(40),
 
-  stabilityBands: [
-    { maxRange: 3, score: 20 },
-    { maxRange: 5, score: 17 },
-    { maxRange: 8, score: 13 },
-    { maxRange: 12, score: 8 },
-    { maxRange: 15, score: 4 },
-    { maxRange: null, score: 0 },
-  ],
+  structuralQuality: {
+    rmseScalePct: new Decimal("2.5"),
+    neutralSlopePctPer10d: new Decimal("0.5"),
+    fullDirectionSlopePctPer10d: new Decimal("1.5"),
+  },
 
   sampleAnchors: [
     { sample: 0, score: 0 },
@@ -149,6 +161,12 @@ export const MAX_WEIGHTS = {
   stability: 20,
   sample: 15,
   momentum: 5,
+} as const;
+
+/** Divisão interna dos 20 pontos de ESTABILIDADE (`MAX_WEIGHTS.stability`) — soma DEVE ser 20. Verificado em teste. */
+export const STABILITY_SUB_WEIGHTS = {
+  coherence: 14,
+  direction: 6,
 } as const;
 
 export interface StructuralWindowFrequency {
@@ -200,7 +218,161 @@ function standardDeviation(values: Decimal[]): Decimal {
   return variance.sqrt();
 }
 
-/** Seção 7 — ESTABILIDADE (20 pontos), baseada no range (max-min) entre as janelas estruturais. */
+export interface StructuralRegressionResult {
+  /** Pontos percentuais de frequência por passo de 10 dias EM DIREÇÃO AO PRESENTE (x cresce conforme a janela encolhe). */
+  slope: Decimal;
+  intercept: Decimal;
+  rmse: Decimal;
+  rSquared: Decimal;
+}
+
+/**
+ * Regressão linear simples sobre as janelas estruturais, no eixo x
+ * NORMALIZADO em passos de 10 dias — não em dias brutos — pra que o mesmo
+ * slope signifique a mesma coisa numa análise de 70D (3 pontos) ou de 100D
+ * (6 pontos). `windows` chega ordenado da MAIOR janela pra MENOR (seção
+ * "ORDEM DAS JANELAS"), e a maior janela sempre vira x=0:
+ *
+ *   x = (maxStructuralDays - window.days) / 10
+ *
+ * x cresce conforme a janela encolhe, ou seja, caminhando EM DIREÇÃO AO
+ * PRESENTE — um slope positivo significa fortalecimento recente.
+ *
+ * Retorna `null` quando há menos de 2 janelas (sem regressão utilizável) —
+ * ver `computeStructuralQualityScore` pra como esse caso é tratado no score.
+ */
+export function computeStructuralRegression(windows: StructuralWindowFrequency[]): StructuralRegressionResult | null {
+  if (windows.length < 2) return null;
+
+  const maxStructuralDays = windows[0].days;
+  const points = windows.map((w) => ({
+    x: new Decimal(maxStructuralDays - w.days).div(10),
+    y: w.frequency,
+  }));
+  const n = points.length;
+
+  const meanX = points.reduce((acc, p) => acc.plus(p.x), new Decimal(0)).div(n);
+  const meanY = points.reduce((acc, p) => acc.plus(p.y), new Decimal(0)).div(n);
+
+  const sxy = points.reduce((acc, p) => acc.plus(p.x.minus(meanX).mul(p.y.minus(meanY))), new Decimal(0));
+  const sxx = points.reduce((acc, p) => acc.plus(p.x.minus(meanX).pow(2)), new Decimal(0));
+
+  // sxx só seria 0 se todo x fosse igual, o que exigiria windows.length < 2
+  // (janelas estruturais nunca repetem `days`) — já tratado acima. Mantido
+  // como salvaguarda pra nunca dividir por zero.
+  const slope = sxx.isZero() ? new Decimal(0) : sxy.div(sxx);
+  const intercept = meanY.minus(slope.mul(meanX));
+
+  const sse = points.reduce((acc, p) => {
+    const residual = p.y.minus(intercept.plus(slope.mul(p.x)));
+    return acc.plus(residual.pow(2));
+  }, new Decimal(0));
+  const rmse = sse.div(n).sqrt();
+
+  const sst = points.reduce((acc, p) => acc.plus(p.y.minus(meanY).pow(2)), new Decimal(0));
+  // série constante (SST=0) => trajetória perfeitamente estável, e a reta de
+  // mínimos quadrados nesse caso é sempre y=meanY (SSE também é 0) — nunca
+  // produz NaN/Infinity: tratado como R²=1 diretamente, sem dividir por zero.
+  const rSquared = sst.isZero() ? new Decimal(1) : clampDecimal(new Decimal(1).minus(sse.div(sst)), new Decimal(0), new Decimal(1));
+
+  return { slope, intercept, rmse, rSquared };
+}
+
+export interface StructuralQualityResult {
+  regression: StructuralRegressionResult | null;
+  /** Seção C.1 — até `STABILITY_SUB_WEIGHTS.coherence` (14) pontos. */
+  coherenceScore: Decimal;
+  /** Seção C.2 — até `STABILITY_SUB_WEIGHTS.direction` (6) pontos. */
+  directionScore: Decimal;
+  /** coherenceScore + directionScore, já limitado a [0, MAX_WEIGHTS.stability]. */
+  stabilityScore: Decimal;
+}
+
+/**
+ * Seção 7 — ESTABILIDADE (20 pontos): "as frequências das janelas
+ * estruturais formam uma trajetória coerente?" Uma trajetória pode ser boa
+ * de duas formas — estável (horizontal) OU fortalecendo de forma organizada
+ * — e ruim de duas formas — errática OU enfraquecendo. Range alto NÃO
+ * significa instabilidade (um fortalecimento organizado tem range alto e
+ * ainda assim é uma ótima trajetória), por isso o score não usa mais
+ * range/desvio padrão brutos como critério principal — usa a regressão
+ * linear (`computeStructuralRegression`).
+ */
+export function computeStructuralQualityScore(
+  windows: StructuralWindowFrequency[],
+  config: ScoringConfig = DEFAULT_SCORING_CONFIG
+): StructuralQualityResult {
+  const regression = computeStructuralRegression(windows);
+  const { coherence: maxCoherence, direction: maxDirection } = STABILITY_SUB_WEIGHTS;
+
+  if (!regression) {
+    // Menos de 2 janelas estruturais: não existe regressão utilizável, ou
+    // seja, não há nenhuma evidência de trajetória incoerente NEM de direção
+    // (favorável ou desfavorável) — decisão: não penalizar por falta de
+    // evidência (mesmo espírito de outros pontos do motor, ex: persistência
+    // com poucas janelas), dando os 20 pontos cheios.
+    const coherenceScore = new Decimal(maxCoherence);
+    const directionScore = new Decimal(maxDirection);
+    return { regression: null, coherenceScore, directionScore, stabilityScore: coherenceScore.plus(directionScore) };
+  }
+
+  const { rmseScalePct, neutralSlopePctPer10d, fullDirectionSlopePctPer10d } = config.structuralQuality;
+
+  // A) COERÊNCIA DA TRAJETÓRIA — RMSE baixo (pontos acompanham bem uma reta,
+  // seja ela horizontal, subindo ou descendo) pontua alto; RMSE alto
+  // (errático, sem trajetória coerente) pontua baixo. Decaimento exponencial:
+  // coherenceScore = 14 * exp(-((rmse / rmseScalePct) ^ 2)).
+  const rmseRatio = regression.rmse.div(rmseScalePct);
+  const coherenceScore = clampDecimal(
+    rmseRatio.pow(2).neg().exp().mul(maxCoherence),
+    new Decimal(0),
+    new Decimal(maxCoherence)
+  );
+
+  // B) DIREÇÃO ESTRUTURAL — usa o SLOPE por passo de 10 dias (não a variação
+  // bruta total entre primeira e última janela), pra funcionar igual em
+  // janelas de 70D e de 100D.
+  const absSlope = regression.slope.abs();
+  let directionScore: Decimal;
+  if (absSlope.lte(neutralSlopePctPer10d)) {
+    // trajetória praticamente horizontal (zona neutra) — não penaliza.
+    directionScore = new Decimal(maxDirection);
+  } else if (regression.slope.gt(0)) {
+    // fortalecimento: a organização da trajetória já foi avaliada pela
+    // coerência acima — aqui só reduz um pouco a confiança quando R² é
+    // baixo, sem duplicar a penalização já aplicada pelo RMSE.
+    const positiveDirectionConfidence = new Decimal("0.75").plus(regression.rSquared.mul("0.25"));
+    directionScore = positiveDirectionConfidence.mul(maxDirection);
+  } else {
+    // enfraquecimento: penaliza gradualmente conforme a severidade da queda
+    // (slope) E a confiança de que essa queda é estruturalmente real (R²) —
+    // uma queda com R² baixo não tem evidência estrutural forte, e a
+    // coerência (RMSE) já deve penalizar esse caso separadamente.
+    const severity = clampDecimal(
+      absSlope.minus(neutralSlopePctPer10d).div(fullDirectionSlopePctPer10d.minus(neutralSlopePctPer10d)),
+      new Decimal(0),
+      new Decimal(1)
+    );
+    const directionPenalty = severity.mul(regression.rSquared);
+    directionScore = new Decimal(maxDirection).mul(new Decimal(1).minus(directionPenalty));
+  }
+  directionScore = clampDecimal(directionScore, new Decimal(0), new Decimal(maxDirection));
+
+  const stabilityScore = clampDecimal(
+    coherenceScore.plus(directionScore),
+    new Decimal(0),
+    new Decimal(MAX_WEIGHTS.stability)
+  );
+
+  return { regression, coherenceScore, directionScore, stabilityScore };
+}
+
+/**
+ * Seção 7 — ESTABILIDADE (20 pontos). O subtotal público continua sendo só
+ * `{range, standardDeviation, score}` (não quebra os consumidores atuais) —
+ * range/desvio padrão continuam calculados pra exibição/diagnóstico, mas
+ * quem determina `score` agora é `computeStructuralQualityScore`.
+ */
 export function computeStabilityScore(
   windows: StructuralWindowFrequency[],
   config: ScoringConfig = DEFAULT_SCORING_CONFIG
@@ -214,9 +386,8 @@ export function computeStabilityScore(
   const range = max.minus(min);
   const stdDev = standardDeviation(frequencies);
 
-  const band = config.stabilityBands.find((b) => b.maxRange === null || range.lte(b.maxRange));
-  const score = new Decimal(band?.score ?? 0);
-  return { range, standardDeviation: stdDev, score };
+  const quality = computeStructuralQualityScore(windows, config);
+  return { range, standardDeviation: stdDev, score: quality.stabilityScore };
 }
 
 /** Interpolação linear entre pontos-âncora (usado pelo score de amostra — seção 8). */

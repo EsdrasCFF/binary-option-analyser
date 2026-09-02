@@ -3,12 +3,15 @@ import { Decimal } from "decimal.js";
 import {
   DEFAULT_SCORING_CONFIG,
   MAX_WEIGHTS,
+  STABILITY_SUB_WEIGHTS,
   StructuralWindowFrequency,
   classify,
   computeFrequencyScore,
   computePersistenceScore,
   computeSampleScore,
   computeStabilityScore,
+  computeStructuralRegression,
+  computeStructuralQualityScore,
   computeMomentum,
   decideRecommendation,
   scoreConfidence,
@@ -20,6 +23,11 @@ function windows(entries: Array<[number, number, number]>): StructuralWindowFreq
     frequency: new Decimal(frequency),
     validSamples,
   }));
+}
+
+/** Monta janelas estruturais a partir de uma lista de frequências (maior janela primeiro), com passo de 10 dias, imitando a saída real do motor. */
+function windowsFrom(freqs: number[], startDays: number, validSamples = 30): StructuralWindowFrequency[] {
+  return freqs.map((f, i) => ({ days: startDays - i * 10, frequency: new Decimal(f), validSamples }));
 }
 
 describe("pesos do Confidence Score", () => {
@@ -79,8 +87,13 @@ describe("computeFrequencyScore (seção 6)", () => {
   });
 });
 
-describe("computeStabilityScore (seção 7)", () => {
-  it("range pequeno (exemplo bom: 82.22/79.59/81.25) pontua no topo", () => {
+describe("computeStabilityScore (seção 7) — agora via regressão, não mais range/desvio padrão brutos", () => {
+  it("range/desvio padrão continuam calculados e retornados (diagnóstico/UI), mas não determinam mais o score sozinhos", () => {
+    // Mesmo exemplo de sempre desta suíte: range pequeno (2.63 p.p.), mas o
+    // slope (-0.485 p.p./passo) cai dentro da zona neutra (|slope|<=0.5) —
+    // então a direção não penaliza (6/6), e quem imprime menos coerência
+    // aqui é o RMSE relativamente alto (1.01) por causa do pequeno zigue-
+    // zague 70D->60D->50D. Deixa de ser "20 pontos só pelo range pequeno".
     const w = windows([
       [70, 82.22, 45],
       [60, 79.59, 49],
@@ -88,10 +101,18 @@ describe("computeStabilityScore (seção 7)", () => {
     ]);
     const result = computeStabilityScore(w);
     expect(result.range.toDecimalPlaces(2).toNumber()).toBeCloseTo(2.63, 1);
-    expect(result.score.toNumber()).toBe(20); // range <= 3
+    expect(result.standardDeviation.toDecimalPlaces(2).toNumber()).toBeCloseTo(1.09, 1);
+    expect(result.score.toNumber()).toBeCloseTo(17.89, 1);
   });
 
-  it("range grande (exemplo ruim: 95/88/79/71) pontua 0", () => {
+  it("um declínio grande mas MUITO coerente (95/88/79/71, R² perto de 1) não é mais zerado — é tratado como enfraquecimento organizado", () => {
+    // Sob o modelo antigo (range bruto), um range de 24 p.p. zerava a
+    // estabilidade. Sob o novo modelo, essa queda é muito bem explicada por
+    // uma reta (R²=0.998) — a coerência continua alta; só a direção (que
+    // aponta claramente pra baixo) é que fica bem penalizada. O resultado
+    // fica moderado-baixo, no mesmo espírito do caso sintético de
+    // "enfraquecimento organizado" (seção mais abaixo), não mais um zero
+    // automático — só uma trajetória ERRÁTICA (RMSE alto) deve zerar.
     const w = windows([
       [80, 95, 40],
       [70, 88, 40],
@@ -100,12 +121,166 @@ describe("computeStabilityScore (seção 7)", () => {
     ]);
     const result = computeStabilityScore(w);
     expect(result.range.toNumber()).toBe(24);
-    expect(result.score.toNumber()).toBe(0); // range > 15
+    expect(result.score.toNumber()).toBeCloseTo(13.63, 1);
   });
 
-  it("bandas intermediárias", () => {
-    expect(computeStabilityScore(windows([[70, 80, 30], [50, 75.5, 30]])).score.toNumber()).toBe(17); // range 4.5 -> banda (3,5]
-    expect(computeStabilityScore(windows([[70, 80, 30], [50, 73, 30]])).score.toNumber()).toBe(13); // range 7 -> banda (5,8]
+  it("com só 2 janelas, a reta sempre passa exatamente pelos 2 pontos (RMSE=0, coerência máxima) — quem penaliza é só a direção", () => {
+    // Ambos os exemplos têm |slope| bem acima do teto de severidade máxima
+    // (fullDirectionSlopePctPer10d=1.5), então os dois ficam com direção
+    // zerada e coerência no teto — 14/20 pros dois, mesmo com magnitudes de
+    // queda diferentes (a diferença deixa de importar depois que a queda já
+    // é "severa o bastante" pra zerar a confiança na direção).
+    expect(computeStabilityScore(windows([[70, 80, 30], [50, 75.5, 30]])).score.toNumber()).toBeCloseTo(14, 1);
+    expect(computeStabilityScore(windows([[70, 80, 30], [50, 73, 30]])).score.toNumber()).toBeCloseTo(14, 1);
+  });
+});
+
+describe("computeStructuralRegression — regressão linear no eixo normalizado de passos de 10 dias", () => {
+  it("retorna null com menos de 2 janelas (sem regressão utilizável) — nunca NaN", () => {
+    expect(computeStructuralRegression([])).toBeNull();
+    expect(computeStructuralRegression(windows([[50, 81, 32]]))).toBeNull();
+  });
+
+  it("série perfeitamente constante: SST=0 e SSE=0, tratada como trajetória perfeitamente estável (R²=1, sem dividir por zero)", () => {
+    const result = computeStructuralRegression(windows([[70, 80, 30], [60, 80, 30], [50, 80, 30]]))!;
+    expect(result.slope.toNumber()).toBe(0);
+    expect(result.rmse.toNumber()).toBe(0);
+    expect(result.rSquared.toNumber()).toBe(1);
+    expect(Number.isFinite(result.slope.toNumber())).toBe(true);
+    expect(Number.isFinite(result.rSquared.toNumber())).toBe(true);
+  });
+
+  it("eixo x normalizado em passos de 10 dias, sempre começando em 0 na maior janela", () => {
+    // 70D,60D,50D -> x=0,1,2 ; slope exatamente 1 p.p. por passo (79->80->81).
+    const result = computeStructuralRegression(windows([[70, 79, 30], [60, 80, 30], [50, 81, 30]]))!;
+    expect(result.slope.toNumber()).toBeCloseTo(1, 6);
+    expect(result.intercept.toNumber()).toBeCloseTo(79, 6);
+    expect(result.rSquared.toNumber()).toBeCloseTo(1, 6);
+    expect(result.rmse.toNumber()).toBeCloseTo(0, 6);
+  });
+});
+
+describe("computeStructuralQualityScore — coerência (14) + direção (6) = estabilidade (20)", () => {
+  it("os pesos internos da estabilidade somam exatamente 20", () => {
+    expect(STABILITY_SUB_WEIGHTS.coherence + STABILITY_SUB_WEIGHTS.direction).toBe(MAX_WEIGHTS.stability);
+  });
+
+  it("sem janelas suficientes pra regressão (1 janela), não penaliza por falta de evidência — 20/20", () => {
+    const result = computeStructuralQualityScore(windows([[50, 81, 32]]));
+    expect(result.regression).toBeNull();
+    expect(result.stabilityScore.toNumber()).toBe(20);
+  });
+
+  describe("casos reais (seção 23 do briefing)", () => {
+    it("CASO 1 — EUR/GBP 09:25 PUT (79.59, 80.95, 80.00): trajetória muito estável, ~19-20", () => {
+      const score = computeStructuralQualityScore(windowsFrom([79.59, 80.95, 80.0], 70)).stabilityScore.toNumber();
+      expect(score).toBeGreaterThanOrEqual(19);
+      expect(score).toBeLessThanOrEqual(20);
+    });
+
+    it("CASO 2 — AUD/CHF 13:55 CALL (78.72, 80.00, 81.82): fortalecimento extremamente organizado (R² perto de 1), ~19-20", () => {
+      const result = computeStructuralQualityScore(windowsFrom([78.72, 80.0, 81.82], 70));
+      expect(result.regression!.rSquared.toNumber()).toBeGreaterThan(0.95);
+      expect(result.stabilityScore.toNumber()).toBeGreaterThanOrEqual(19);
+      expect(result.stabilityScore.toNumber()).toBeLessThanOrEqual(20);
+    });
+
+    it("CASO 3 — AUD/JPY/GBPUSD (70.21, 70.73, 70.59): estrutura praticamente horizontal, ~19-20", () => {
+      const score = computeStructuralQualityScore(windowsFrom([70.21, 70.73, 70.59], 70)).stabilityScore.toNumber();
+      expect(score).toBeGreaterThanOrEqual(19);
+      expect(score).toBeLessThanOrEqual(20);
+    });
+
+    it("CASO 4 — AUD/CAD 14:00 CALL (76.60, 78.05, 76.47): pequena oscilação em torno de um nível consistente, ~18-20", () => {
+      const score = computeStructuralQualityScore(windowsFrom([76.6, 78.05, 76.47], 70)).stabilityScore.toNumber();
+      expect(score).toBeGreaterThanOrEqual(18);
+      expect(score).toBeLessThanOrEqual(20);
+    });
+
+    it("CASO 5 — EUR/USD 06:55 PUT (77.78, 82.76, 87.50): fortalecimento quase perfeitamente linear — NÃO penalizar apesar do range alto (9.72 p.p.) e desvio padrão alto (3.97 p.p.)", () => {
+      const w = windowsFrom([77.78, 82.76, 87.5], 70);
+      const stab = computeStabilityScore(w);
+      expect(stab.range.toDecimalPlaces(2).toNumber()).toBeCloseTo(9.72, 1);
+      expect(stab.standardDeviation.toDecimalPlaces(2).toNumber()).toBeCloseTo(3.97, 1);
+      const quality = computeStructuralQualityScore(w);
+      expect(quality.regression!.rSquared.toNumber()).toBeGreaterThan(0.95);
+      expect(quality.regression!.rmse.toNumber()).toBeLessThan(1);
+      expect(quality.stabilityScore.toNumber()).toBeGreaterThanOrEqual(19);
+      expect(quality.stabilityScore.toNumber()).toBeLessThanOrEqual(20);
+    });
+
+    it("CASO 6 — EUR/GBP 12:25 PUT (76.00, 79.07, 75.00): oscila mais que os anteriores, ~14-16", () => {
+      const score = computeStructuralQualityScore(windowsFrom([76.0, 79.07, 75.0], 70)).stabilityScore.toNumber();
+      expect(score).toBeGreaterThanOrEqual(14);
+      expect(score).toBeLessThanOrEqual(16);
+    });
+
+    it("CASO 7 — EUR/CHF 13:55 CALL (71.43, 73.81, 71.43): estável, mas com oscilação central perceptível, ~16-19", () => {
+      const score = computeStructuralQualityScore(windowsFrom([71.43, 73.81, 71.43], 70)).stabilityScore.toNumber();
+      expect(score).toBeGreaterThanOrEqual(16);
+      expect(score).toBeLessThanOrEqual(19);
+    });
+
+    it("CASO 8 — AUD/JPY 11:50 PUT (66.00, 72.09, 72.22): fortalecimento menos linear que o EUR/USD, ~14-17", () => {
+      const score = computeStructuralQualityScore(windowsFrom([66.0, 72.09, 72.22], 70)).stabilityScore.toNumber();
+      expect(score).toBeGreaterThanOrEqual(14);
+      expect(score).toBeLessThanOrEqual(17);
+    });
+  });
+
+  describe("cenários sintéticos obrigatórios", () => {
+    it("fortalecimento organizado (74,76,79,82,85,88): scoreStability >= 19", () => {
+      const score = computeStructuralQualityScore(windowsFrom([74, 76, 79, 82, 85, 88], 100)).stabilityScore.toNumber();
+      expect(score).toBeGreaterThanOrEqual(19);
+    });
+
+    it("estável (79,79.5,79,80,79.5,80): scoreStability >= 19", () => {
+      const score = computeStructuralQualityScore(windowsFrom([79, 79.5, 79, 80, 79.5, 80], 100)).stabilityScore.toNumber();
+      expect(score).toBeGreaterThanOrEqual(19);
+    });
+
+    it("errático (74,88,73,86,75,87): RMSE alto, scoreStability <= 7 — não confundir com fortalecimento só por ter slope positivo", () => {
+      const w = windowsFrom([74, 88, 73, 86, 75, 87], 100);
+      const result = computeStructuralQualityScore(w);
+      // o slope até dá levemente positivo (ruído), mas o RMSE alto zera a
+      // coerência — é isso que impede o falso-positivo de "fortalecimento".
+      expect(result.regression!.rmse.toNumber()).toBeGreaterThan(4);
+      expect(result.stabilityScore.toNumber()).toBeLessThanOrEqual(7);
+    });
+
+    it("enfraquecimento organizado (88,85,82,79,76,74): RMSE baixo, R² alto, coerência alta, MAS direção próxima de 0 — scoreStability ~12-15 (não é 'errático')", () => {
+      const w = windowsFrom([88, 85, 82, 79, 76, 74], 100);
+      const result = computeStructuralQualityScore(w);
+      expect(result.regression!.rmse.toNumber()).toBeLessThan(1);
+      expect(result.regression!.rSquared.toNumber()).toBeGreaterThan(0.95);
+      expect(result.coherenceScore.toNumber()).toBeGreaterThan(10);
+      expect(result.directionScore.toNumber()).toBeLessThan(1);
+      expect(result.stabilityScore.toNumber()).toBeGreaterThanOrEqual(12);
+      expect(result.stabilityScore.toNumber()).toBeLessThanOrEqual(15);
+    });
+  });
+
+  it("CONSISTÊNCIA 70D vs 100D: mesmo slope (~-1 p.p./passo) deve ser interpretado com severidade semelhante, não penalizado a mais só por variação total maior", () => {
+    const result70d = computeStructuralQualityScore(windowsFrom([80, 79, 78], 70));
+    const result100d = computeStructuralQualityScore(windowsFrom([83, 82, 81, 80, 79, 78], 100));
+
+    expect(result70d.regression!.slope.toNumber()).toBeCloseTo(-1, 6);
+    expect(result100d.regression!.slope.toNumber()).toBeCloseTo(-1, 6);
+
+    // mesmo slope + mesmo R² (ambos perfeitamente lineares aqui) -> mesmíssimo
+    // directionScore e coherenceScore, independente de serem 3 ou 6 pontos.
+    expect(result70d.directionScore.toNumber()).toBeCloseTo(result100d.directionScore.toNumber(), 6);
+    expect(result70d.coherenceScore.toNumber()).toBeCloseTo(result100d.coherenceScore.toNumber(), 6);
+    expect(result70d.stabilityScore.toNumber()).toBeCloseTo(result100d.stabilityScore.toNumber(), 6);
+  });
+
+  it("valores de referência do briefing pro directionScore (slope -0.5/-1.0/-1.5 com R²=1)", () => {
+    // -0.5 cai na zona neutra (|slope|<=0.5) -> 6 cheio.
+    expect(computeStructuralQualityScore(windowsFrom([80.5, 80, 79.5], 70)).directionScore.toNumber()).toBeCloseTo(6, 1);
+    // -1.0, R²=1 -> severity=0.5, penalty=0.5 -> 6*(1-0.5)=3.
+    expect(computeStructuralQualityScore(windowsFrom([80, 79, 78], 70)).directionScore.toNumber()).toBeCloseTo(3, 1);
+    // -1.5, R²=1 -> severity=1, penalty=1 -> 0.
+    expect(computeStructuralQualityScore(windowsFrom([81, 79.5, 78], 70)).directionScore.toNumber()).toBeCloseTo(0, 1);
   });
 });
 
