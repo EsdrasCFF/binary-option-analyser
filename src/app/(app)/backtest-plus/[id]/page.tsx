@@ -17,6 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { RenameBacktestPlusDialog } from "@/components/rename-backtest-plus-dialog";
 import { formatDate, formatDateTime, formatRatioPercent, formatStatus } from "@/lib/format";
 import { ChevronDown, ChevronRight } from "lucide-react";
@@ -75,6 +76,33 @@ function ENTRY_RESULT_VARIANT(result: BacktestPlusEntry["result"]): "default" | 
   if (result === "loss") return "destructive";
   if (result === "tie") return "secondary";
   return "outline"; // invalid
+}
+
+/**
+ * Badge "#N" = posição ORIGINAL do candidato dentro do pool de 10 (poolRank
+ * + 1), não a ordem cronológica da entrada no dia — a mesma identificação
+ * numérica é usada na aba "Pool de candidatos" e no "Plano de entradas
+ * utilizado", pra dar pra cruzar as duas visualizações. Só exibição: não
+ * lê nem deriva nada além do que já veio persistido em `candidate`.
+ */
+function PoolPositionBadge({ candidate }: { candidate: BacktestPlusCandidate | null }) {
+  if (!candidate) return <Badge variant="outline">?</Badge>;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<Badge variant="outline" className="cursor-help tabular-nums" />}>
+        #{candidate.poolRank + 1}
+      </TooltipTrigger>
+      <TooltipContent className="flex flex-col gap-0.5">
+        <span className="font-medium">
+          #{candidate.poolRank + 1} · {candidate.symbol}
+        </span>
+        <span>
+          {candidate.timeOfDay} · {candidate.direction}
+        </span>
+        <span>Score {candidate.confidenceScore}</span>
+      </TooltipContent>
+    </Tooltip>
+  );
 }
 
 function ScoreboardTable({ models }: { models: BacktestPlusModel[] }) {
@@ -171,7 +199,8 @@ function EntryDetailTable({ entries }: { entries: BacktestPlusEntry[] }) {
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead className="text-right">#</TableHead>
+          <TableHead className="text-right">Ordem</TableHead>
+          <TableHead>Posição</TableHead>
           <TableHead>Par</TableHead>
           <TableHead>Horário</TableHead>
           <TableHead>Previsto → Real</TableHead>
@@ -186,6 +215,9 @@ function EntryDetailTable({ entries }: { entries: BacktestPlusEntry[] }) {
         {entries.map((e) => (
           <TableRow key={e.id}>
             <TableCell className="text-right text-muted-foreground">{e.entryOrder}</TableCell>
+            <TableCell>
+              <PoolPositionBadge candidate={e.candidate} />
+            </TableCell>
             <TableCell className="font-medium">{e.candidate?.symbol ?? "—"}</TableCell>
             <TableCell>{e.candidate?.timeOfDay ?? "—"}</TableCell>
             <TableCell>
@@ -245,6 +277,58 @@ function ExpandableDayRow({ date, entries }: { date: string; entries: BacktestPl
   );
 }
 
+/**
+ * "Plano de entradas utilizado": pra cada dia, quais posições do pool de 10
+ * o modelo usou. Duas leituras da MESMA lista de entradas já persistida —
+ * nada é reexecutado nem recalculado:
+ *   - "Posições selecionadas": as mesmas `entries`, só reordenadas (na tela)
+ *     por `candidate.poolRank` crescente — pra responder "quais dos #1..#10
+ *     entraram nesse dia", independente da ordem em que aconteceram.
+ *   - "Ordem cronológica": as mesmas `entries`, ordenadas por `entryOrder`
+ *     (o campo já salvo no backtest) — nunca um horário recalculado aqui.
+ */
+function EntryPlanTable({ days }: { days: Array<[string, BacktestPlusEntry[]]> }) {
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Data</TableHead>
+          <TableHead>Posições selecionadas</TableHead>
+          <TableHead>Ordem cronológica</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {days.map(([date, entries]) => {
+          const byPosition = [...entries].sort((a, b) => (a.candidate?.poolRank ?? 0) - (b.candidate?.poolRank ?? 0));
+          const byChronological = [...entries].sort((a, b) => a.entryOrder - b.entryOrder);
+          return (
+            <TableRow key={date}>
+              <TableCell className="font-medium whitespace-nowrap">{formatDate(date)}</TableCell>
+              <TableCell>
+                <div className="flex flex-wrap gap-1">
+                  {byPosition.map((e) => (
+                    <PoolPositionBadge key={e.id} candidate={e.candidate} />
+                  ))}
+                </div>
+              </TableCell>
+              <TableCell>
+                <div className="flex flex-wrap items-center gap-1">
+                  {byChronological.map((e, i) => (
+                    <span key={e.id} className="inline-flex items-center gap-1">
+                      <PoolPositionBadge candidate={e.candidate} />
+                      {i < byChronological.length - 1 && <span className="text-muted-foreground">→</span>}
+                    </span>
+                  ))}
+                </div>
+              </TableCell>
+            </TableRow>
+          );
+        })}
+      </TableBody>
+    </Table>
+  );
+}
+
 function groupByDate(entries: BacktestPlusEntry[]): Array<[string, BacktestPlusEntry[]]> {
   const map = new Map<string, BacktestPlusEntry[]>();
   for (const e of entries) {
@@ -289,6 +373,19 @@ function ModelDetail({ model, entriesPerDay }: { model: BacktestPlusModel; entri
 
       <Card>
         <CardHeader>
+          <CardTitle className="text-base">Plano de entradas utilizado</CardTitle>
+          <CardDescription>
+            #1 a #10 identificam a posição original do candidato dentro do pool — não a ordem de entrada no
+            dia. Passe o mouse sobre uma posição para ver o par/horário/direção/score.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <EntryPlanTable days={days} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle className="text-base">Dia a dia</CardTitle>
           <CardDescription>Clique numa linha para ver o detalhe OHLC de cada entrada.</CardDescription>
         </CardHeader>
@@ -322,7 +419,7 @@ function CandidatesAuditTable({ candidates }: { candidates: BacktestPlusCandidat
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead className="text-right">#</TableHead>
+          <TableHead>Posição</TableHead>
           <TableHead>Par</TableHead>
           <TableHead>Horário</TableHead>
           <TableHead>Direção</TableHead>
@@ -335,7 +432,11 @@ function CandidatesAuditTable({ candidates }: { candidates: BacktestPlusCandidat
       <TableBody>
         {candidates.map((c) => (
           <TableRow key={c.id}>
-            <TableCell className="text-right text-muted-foreground">{c.poolRank + 1}</TableCell>
+            <TableCell>
+              <Badge variant="outline" className="tabular-nums">
+                #{c.poolRank + 1}
+              </Badge>
+            </TableCell>
             <TableCell className="font-medium">{c.symbol}</TableCell>
             <TableCell>{c.timeOfDay}</TableCell>
             <TableCell>
