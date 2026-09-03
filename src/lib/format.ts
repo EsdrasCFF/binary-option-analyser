@@ -15,6 +15,12 @@ export function formatPercent(value: string | number | null | undefined, decimal
   return `${Number(value).toFixed(decimals)}%`;
 }
 
+/** Como `formatPercent`, mas para uma RAZÃO 0-1 (ex: zeroOfNRate="0.3333") — multiplica por 100 antes de formatar. Usado nas métricas do Backtest Plus, que chegam da API como fração, não como percentual já escalado. */
+export function formatRatioPercent(value: string | number | null | undefined, decimals = 2): string {
+  if (value === null || value === undefined) return "—";
+  return `${(Number(value) * 100).toFixed(decimals)}%`;
+}
+
 /**
  * Datas "puras" (sem hora) — ex: período de uma análise, escolhidas num
  * `<input type="date">` — são gravadas como meia-noite UTC representando só
@@ -70,6 +76,9 @@ const STATUS_LABELS: Record<string, string> = {
   win: "Vitória",
   loss: "Derrota",
   tie: "Empate",
+  invalid: "Inválido",
+  no_data: "Sem dado",
+  doji: "Doji",
   ignore: "Ignorar",
   count_as_loss: "Contar como derrota",
   count_as_tie: "Contar como empate",

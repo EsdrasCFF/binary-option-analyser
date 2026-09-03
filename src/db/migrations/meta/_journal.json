@@ -113,6 +113,13 @@
       "when": 1788378502952,
       "tag": "0015_powerful_meltdown",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1788382769859,
+      "tag": "0016_bouncy_starbolt",
+      "breakpoints": true
     }
   ]
 }

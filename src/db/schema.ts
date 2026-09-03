@@ -78,6 +78,20 @@ export const multiPeriodMomentumEnum = pgEnum("multi_period_momentum", [
   "enfraquecendo",
   "possivel_inversao",
 ]);
+export const backtestPlusModelTypeEnum = pgEnum("backtest_plus_model_type", [
+  "top_score",
+  "random",
+  "rotation",
+  "weighted_score",
+  "diversified",
+]);
+export const backtestPlusEntryResultEnum = pgEnum("backtest_plus_entry_result", [
+  "win",
+  "loss",
+  "tie",
+  "invalid",
+]);
+export const backtestPlusInvalidReasonEnum = pgEnum("backtest_plus_invalid_reason", ["no_data", "doji"]);
 export const multiPeriodInversionEnum = pgEnum("multi_period_inversion", [
   "none",
   "possible",
@@ -477,6 +491,149 @@ export const backtestOperations = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// BacktestPlus (parte do resultado JÁ CONGELADO de uma Análise Plus — nunca
+// recalcula Confidence Score/ranking/direção com dados futuros, ver
+// `src/lib/backtest-plus/`). Diferente do Backtest normal (que re-ranqueia
+// os horários dia a dia): aqui o pool de 10 candidatos é FIXO desde a
+// criação, snapshotado em `backtestPlusCandidates`, e o que varia dia a dia
+// é só QUAL SUBCONJUNTO de N desses 10 cada um dos 5 modelos escolhe.
+// ---------------------------------------------------------------------------
+
+export const backtestPlus = pgTable(
+  "backtest_plus",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    sourceAnalysisId: uuid("source_analysis_id")
+      .notNull()
+      .references(() => multiPeriodAnalyses.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 60 }), // opcional, mesmo padrão de Backtest/BankrollLedger
+    // data-base CONGELADA (a referenceDate da Análise Plus origem no momento
+    // da criação) — todo o snapshot em `backtestPlusCandidates` reflete o
+    // estado da análise EXATAMENTE nesta data, mesmo que a análise seja
+    // reprocessada depois.
+    referenceDate: timestamp("reference_date", { withTimezone: true }).notNull(),
+    entriesPerDay: integer("entries_per_day").notNull(), // 4 ou 5
+    forwardDaysRequested: integer("forward_days_requested").notNull(), // 1-5, pedido pelo usuário
+    randomSeed: integer("random_seed").notNull(), // gerado uma vez na criação; usado por RANDOM e WEIGHTED_SCORE
+    status: jobStatusEnum("status").notNull().default("pending"),
+    progressPct: integer("progress_pct").notNull().default(0),
+    errorMessage: text("error_message"),
+    // período EFETIVAMENTE testado (dias operacionais válidos encontrados —
+    // pode ser < forwardDaysRequested se faltar candle na ponta, nunca mais).
+    effectiveStartDate: timestamp("effective_start_date", { withTimezone: true }),
+    effectiveEndDate: timestamp("effective_end_date", { withTimezone: true }),
+    daysTested: integer("days_tested"),
+    bestModel: backtestPlusModelTypeEnum("best_model"), // seção 43: menor zeroOfNRate > maior dailySuccessRate > ...
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("backtest_plus_user_idx").on(table.userId),
+    index("backtest_plus_source_analysis_idx").on(table.sourceAnalysisId),
+  ]
+);
+
+// snapshot do pool de 10 candidatos — cada coluna é uma CÓPIA do dado da
+// Análise Plus no momento da criação, não uma referência viva. `sourceResultId`
+// é mantido só para auditoria (não é reconsultado para calcular nada).
+export const backtestPlusCandidates = pgTable(
+  "backtest_plus_candidates",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    backtestId: uuid("backtest_id")
+      .notNull()
+      .references(() => backtestPlus.id, { onDelete: "cascade" }),
+    sourceResultId: uuid("source_result_id")
+      .notNull()
+      .references(() => multiPeriodPatternResults.id),
+    poolRank: integer("pool_rank").notNull(), // 0-9 — ordem de seleção/ranking original, usada como desempate determinístico
+    currencyPairId: uuid("currency_pair_id").notNull().references(() => currencyPairs.id),
+    symbol: varchar("symbol", { length: 20 }).notNull(),
+    timeOfDay: varchar("time_of_day", { length: 5 }).notNull(),
+    timeframe: varchar("timeframe", { length: 10 }).notNull(),
+    direction: directionEnum("direction").notNull(), // sempre CALL ou PUT (nunca DOJI — é a direção do padrão)
+    confidenceScore: integer("confidence_score").notNull(),
+    classification: multiPeriodClassificationEnum("classification").notNull(),
+    recommendation: multiPeriodRecommendationEnum("recommendation").notNull(),
+    momentumTrend: multiPeriodMomentumEnum("momentum_trend").notNull(),
+    structuralAverage: numeric("structural_average", { precision: 5, scale: 2 }).notNull(),
+  },
+  (table) => [index("backtest_plus_candidates_backtest_idx").on(table.backtestId)]
+);
+
+// uma linha por modelo (sempre 5 por backtest) — métricas agregadas, seção 12/13.
+export const backtestPlusModels = pgTable(
+  "backtest_plus_models",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    backtestId: uuid("backtest_id")
+      .notNull()
+      .references(() => backtestPlus.id, { onDelete: "cascade" }),
+    modelType: backtestPlusModelTypeEnum("model_type").notNull(),
+    rankPosition: integer("rank_position").notNull(), // 1 = melhor modelo (seção 43)
+
+    daysTested: integer("days_tested").notNull(),
+    successfulDays: integer("successful_days").notNull(),
+    failedDays: integer("failed_days").notNull(), // == zeroOfN
+    dailySuccessRate: numeric("daily_success_rate", { precision: 6, scale: 4 }).notNull(),
+    zeroOfNRate: numeric("zero_of_n_rate", { precision: 6, scale: 4 }).notNull(),
+
+    totalEntries: integer("total_entries").notNull(),
+    totalWins: integer("total_wins").notNull(),
+    totalLosses: integer("total_losses").notNull(),
+    totalTies: integer("total_ties").notNull(),
+    invalidEntries: integer("invalid_entries").notNull(),
+    individualHitRate: numeric("individual_hit_rate", { precision: 6, scale: 4 }).notNull(),
+
+    averageEntriesUntilFirstWin: numeric("average_entries_until_first_win", { precision: 6, scale: 3 }),
+    medianEntriesUntilFirstWin: numeric("median_entries_until_first_win", { precision: 6, scale: 3 }),
+
+    firstWinAt1: integer("first_win_at_1").notNull(),
+    firstWinAt2: integer("first_win_at_2").notNull(),
+    firstWinAt3: integer("first_win_at_3").notNull(),
+    firstWinAt4: integer("first_win_at_4").notNull(),
+    firstWinAt5: integer("first_win_at_5"), // null quando entriesPerDay=4
+    zeroOfN: integer("zero_of_n").notNull(),
+
+    coverageAt1: numeric("coverage_at_1", { precision: 6, scale: 4 }).notNull(),
+    coverageAt2: numeric("coverage_at_2", { precision: 6, scale: 4 }).notNull(),
+    coverageAt3: numeric("coverage_at_3", { precision: 6, scale: 4 }).notNull(),
+    coverageAt4: numeric("coverage_at_4", { precision: 6, scale: 4 }).notNull(),
+    coverageAt5: numeric("coverage_at_5", { precision: 6, scale: 4 }), // null quando entriesPerDay=4
+  },
+  (table) => [index("backtest_plus_models_backtest_idx").on(table.backtestId)]
+);
+
+// uma linha por entrada avaliada (modelo × dia × posição, até 5 modelos × 5 dias × 5 entradas = 125 linhas no máximo).
+export const backtestPlusEntries = pgTable(
+  "backtest_plus_entries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    modelId: uuid("model_id")
+      .notNull()
+      .references(() => backtestPlusModels.id, { onDelete: "cascade" }),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => backtestPlusCandidates.id, { onDelete: "cascade" }),
+    targetDate: timestamp("target_date", { withTimezone: true }).notNull(), // dia operacional pura (meia-noite UTC, mesma convenção de operationDate)
+    entryOrder: integer("entry_order").notNull(), // 1..N, posição cronológica (por horário real) dentro do dia
+    result: backtestPlusEntryResultEnum("result").notNull(),
+    invalidReason: backtestPlusInvalidReasonEnum("invalid_reason"), // só quando result="invalid"
+    candleOpenTime: timestamp("candle_open_time", { withTimezone: true }),
+    candleOpen: numeric("candle_open", { precision: 18, scale: 8 }),
+    candleHigh: numeric("candle_high", { precision: 18, scale: 8 }),
+    candleLow: numeric("candle_low", { precision: 18, scale: 8 }),
+    candleClose: numeric("candle_close", { precision: 18, scale: 8 }),
+    actualDirection: directionEnum("actual_direction"), // null quando invalid por NO_DATA
+  },
+  (table) => [
+    index("backtest_plus_entries_model_idx").on(table.modelId),
+    index("backtest_plus_entries_target_date_idx").on(table.targetDate),
+  ]
+);
+
+// ---------------------------------------------------------------------------
 // BankrollLedger + BankrollLedgerEntry
 // (planilha MANUAL de operações — diferente do Backtest: o resultado de cada
 // linha é marcado pelo usuário, não calculado a partir do histórico de
@@ -653,6 +810,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   analyses: many(analyses),
   multiPeriodAnalyses: many(multiPeriodAnalyses),
   backtests: many(backtests),
+  backtestPlus: many(backtestPlus),
   bankrollLedgers: many(bankrollLedgers),
   bankrollConfigurations: many(bankrollConfigurations),
   martingaleCalculations: many(martingaleCalculations),
@@ -694,6 +852,38 @@ export const multiPeriodWindowsRelations = relations(multiPeriodWindows, ({ one 
 export const backtestsRelations = relations(backtests, ({ one, many }) => ({
   user: one(users, { fields: [backtests.userId], references: [users.id] }),
   operations: many(backtestOperations),
+}));
+
+export const backtestPlusRelations = relations(backtestPlus, ({ one, many }) => ({
+  user: one(users, { fields: [backtestPlus.userId], references: [users.id] }),
+  sourceAnalysis: one(multiPeriodAnalyses, {
+    fields: [backtestPlus.sourceAnalysisId],
+    references: [multiPeriodAnalyses.id],
+  }),
+  candidates: many(backtestPlusCandidates),
+  models: many(backtestPlusModels),
+}));
+
+export const backtestPlusCandidatesRelations = relations(backtestPlusCandidates, ({ one, many }) => ({
+  backtest: one(backtestPlus, { fields: [backtestPlusCandidates.backtestId], references: [backtestPlus.id] }),
+  sourceResult: one(multiPeriodPatternResults, {
+    fields: [backtestPlusCandidates.sourceResultId],
+    references: [multiPeriodPatternResults.id],
+  }),
+  entries: many(backtestPlusEntries),
+}));
+
+export const backtestPlusModelsRelations = relations(backtestPlusModels, ({ one, many }) => ({
+  backtest: one(backtestPlus, { fields: [backtestPlusModels.backtestId], references: [backtestPlus.id] }),
+  entries: many(backtestPlusEntries),
+}));
+
+export const backtestPlusEntriesRelations = relations(backtestPlusEntries, ({ one }) => ({
+  model: one(backtestPlusModels, { fields: [backtestPlusEntries.modelId], references: [backtestPlusModels.id] }),
+  candidate: one(backtestPlusCandidates, {
+    fields: [backtestPlusEntries.candidateId],
+    references: [backtestPlusCandidates.id],
+  }),
 }));
 
 export const bankrollLedgersRelations = relations(bankrollLedgers, ({ one, many }) => ({

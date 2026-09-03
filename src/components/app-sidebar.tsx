@@ -11,6 +11,7 @@ import {
   FileUp,
   Gauge,
   History,
+  Layers,
   LineChart,
   ListChecks,
   Sparkles,
@@ -67,6 +68,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/backtests/new", label: "Novo backtest", icon: BarChart3 },
       { href: "/backtests", label: "Backtests", icon: History },
+      { href: "/backtest-plus", label: "Backtest Plus", icon: Layers },
       { href: "/bankroll-ledgers", label: "Gerenciamentos de banca", icon: ClipboardList },
     ],
   },

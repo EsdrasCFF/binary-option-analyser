@@ -244,6 +244,11 @@ export default function MultiPeriodAnalysisDetailPage({ params }: { params: Prom
             Aplicar gerenciamento
           </Button>
           <LinkLedgerDialog sourceAnalysisId={id} sourceType="plus" />
+          {a.status === "completed" && (
+            <Button size="sm" onClick={() => router.push(`/backtest-plus/new?sourceAnalysisId=${id}`)}>
+              Criar Backtest Plus
+            </Button>
+          )}
           <Badge className="w-fit" variant={a.status === "error" ? "destructive" : "secondary"}>
             {formatStatus(a.status)}
           </Badge>

@@ -638,3 +638,140 @@ export interface CreateBankrollConfigurationInput {
   payoutPct: string;
   maxExposurePct?: string;
 }
+
+// ---------------------------------------------------------------------------
+// BacktestPlus — avalia 5 modelos de seleção sobre o resultado JÁ CONGELADO
+// (snapshot) de uma Análise Plus concluída, contra candles FUTURAS reais.
+// Objetivo primário: minimizar dias 0/N (todas as N entradas do dia
+// perdedoras), não maximizar vitórias totais. Ver `src/lib/backtest-plus/`.
+// ---------------------------------------------------------------------------
+
+export type BacktestPlusModelType = "top_score" | "random" | "rotation" | "weighted_score" | "diversified";
+export type BacktestPlusEntryResult = "win" | "loss" | "tie" | "invalid";
+export type BacktestPlusInvalidReason = "no_data" | "doji";
+
+export const BACKTEST_PLUS_MODEL_LABELS: Record<BacktestPlusModelType, string> = {
+  top_score: "Top Score",
+  random: "Aleatório",
+  rotation: "Rotação",
+  weighted_score: "Ponderado",
+  diversified: "Diversificado",
+};
+
+export interface BacktestPlus {
+  id: string;
+  userId: string;
+  sourceAnalysisId: string;
+  name: string | null;
+  /** Data-base congelada da Análise Plus origem no momento da criação — todo o pool reflete o estado da análise EXATAMENTE nesta data. */
+  referenceDate: string;
+  entriesPerDay: number; // 4 ou 5
+  forwardDaysRequested: number; // 1-5
+  randomSeed: number;
+  status: JobStatus;
+  progressPct: number;
+  errorMessage: string | null;
+  effectiveStartDate: string | null;
+  effectiveEndDate: string | null;
+  /** Dias operacionais efetivamente encontrados/testados — pode ser < forwardDaysRequested se faltar candle na ponta, nunca mais. */
+  daysTested: number | null;
+  bestModel: BacktestPlusModelType | null;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export interface BacktestPlusSummary extends BacktestPlus {
+  sourceAnalysisName: string;
+}
+
+export interface BacktestPlusCandidate {
+  id: string;
+  backtestId: string;
+  sourceResultId: string;
+  poolRank: number; // 0-9
+  currencyPairId: string;
+  symbol: string;
+  timeOfDay: string;
+  timeframe: string;
+  direction: "CALL" | "PUT";
+  confidenceScore: number;
+  classification: MultiPeriodClassification;
+  recommendation: MultiPeriodRecommendation;
+  momentumTrend: MultiPeriodMomentumTrend;
+  structuralAverage: string;
+}
+
+export interface BacktestPlusEntry {
+  id: string;
+  modelId: string;
+  candidateId: string;
+  targetDate: string;
+  entryOrder: number;
+  result: BacktestPlusEntryResult;
+  invalidReason: BacktestPlusInvalidReason | null;
+  candleOpenTime: string | null;
+  candleOpen: string | null;
+  candleHigh: string | null;
+  candleLow: string | null;
+  candleClose: string | null;
+  actualDirection: Direction | null;
+  candidate: BacktestPlusCandidate | null;
+}
+
+export interface BacktestPlusModel {
+  id: string;
+  backtestId: string;
+  modelType: BacktestPlusModelType;
+  /** 1 = melhor modelo (menor zeroOfNRate > maior dailySuccessRate > maior individualHitRate > menor averageEntriesUntilFirstWin > maior totalWins). */
+  rankPosition: number;
+  daysTested: number;
+  successfulDays: number;
+  failedDays: number;
+  dailySuccessRate: string;
+  zeroOfNRate: string;
+  totalEntries: number;
+  totalWins: number;
+  totalLosses: number;
+  totalTies: number;
+  invalidEntries: number;
+  individualHitRate: string;
+  averageEntriesUntilFirstWin: string | null;
+  medianEntriesUntilFirstWin: string | null;
+  firstWinAt1: number;
+  firstWinAt2: number;
+  firstWinAt3: number;
+  firstWinAt4: number;
+  firstWinAt5: number | null; // null quando entriesPerDay=4
+  zeroOfN: number;
+  coverageAt1: string;
+  coverageAt2: string;
+  coverageAt3: string;
+  coverageAt4: string;
+  coverageAt5: string | null; // null quando entriesPerDay=4
+  entries: BacktestPlusEntry[];
+}
+
+export interface BacktestPlusDetail {
+  backtestPlus: BacktestPlus;
+  candidates: BacktestPlusCandidate[];
+  /** Já vem ordenado por rankPosition (melhor primeiro). */
+  models: BacktestPlusModel[];
+}
+
+export interface CreateBacktestPlusInput {
+  name?: string;
+  sourceAnalysisId: string;
+  /** Exatamente 10, distintos — a ordem vira poolRank (desempate determinístico). */
+  candidateIds: string[];
+  entriesPerDay: 4 | 5;
+  forwardDaysRequested: number; // 1-5
+}
+
+export interface CreateBacktestPlusResult {
+  backtestPlus: BacktestPlus;
+  processed: boolean;
+  candlesLoaded?: number;
+  daysTested?: number;
+  bestModel?: string;
+  error?: string;
+}
